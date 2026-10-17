@@ -18,6 +18,10 @@ Extract the ZIP to a folder and run `Orbit Chat.exe`.
 
 [Browse all releases and release notes](https://github.com/redoszeryk0-sys/OrbitChat-releases/releases)
 
+## Open Source
+
+Orbit Chat is an open-source project. The source code is available in this repository. Please see [LICENSE](LICENSE) for the applicable terms.
+
 ## Requirements
 
 - Windows 10 or Windows 11, 64-bit
