@@ -12,7 +12,7 @@ Run the installer to choose a version and installation location. It downloads th
 
 ### Portable version: 1.3.4
 
-[Download Orbit Chat 1.2.1 for Windows x64](https://github.com/redoszeryk0-sys/OrbitChat-releases/releases/download/1.2.1/Orbit-Chat-1.3.4-win-x64.zip)
+[Download Orbit Chat 1.3.4 for Windows x64](https://github.com/redoszeryk0-sys/OrbitChat-releases/releases/tag/1.3.4)
 
 Extract the ZIP to a folder and run `Orbit Chat.exe`.
 
