@@ -10,9 +10,9 @@ Official downloads for **Orbit Chat**, an independent Windows chat application.
 
 Run the installer to choose a version and installation location. It downloads the selected release and checks its SHA-256 digest when one is provided by GitHub. When setup finishes, choose **Open & exit** to launch Orbit Chat or **Exit** to close the installer.
 
-### Portable version: 1.2.1
+### Portable version: 1.3.4
 
-[Download Orbit Chat 1.2.1 for Windows x64](https://github.com/redoszeryk0-sys/OrbitChat-releases/releases/download/1.2.1/Orbit-Chat-1.2.1-win-x64.zip)
+[Download Orbit Chat 1.2.1 for Windows x64](https://github.com/redoszeryk0-sys/OrbitChat-releases/releases/download/1.2.1/Orbit-Chat-1.3.4-win-x64.zip)
 
 Extract the ZIP to a folder and run `Orbit Chat.exe`.
 
