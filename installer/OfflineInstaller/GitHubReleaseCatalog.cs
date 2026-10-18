@@ -8,12 +8,12 @@ using System.Text.RegularExpressions;
 
 namespace OrbitChat.SetupPreview;
 
-public sealed record OrbitRelease(string Tag, string Label, string Subtitle, string DownloadUrl, long Size, string? Sha256, bool IsNewest)
+public sealed record OrbitRelease(string Tag, string Label, string Subtitle, string DownloadUrl, long Size, string? Sha256, bool IsNewest, string? ReleaseNotes = null)
 {
     public override string ToString() => Label;
 }
 
-public readonly record struct DownloadProgress(long ReceivedBytes, long? TotalBytes);
+public readonly record struct DownloadProgress(long ReceivedBytes, long? TotalBytes, bool IsVerifying = false);
 
 public static partial class GitHubReleaseCatalog
 {
@@ -69,11 +69,13 @@ public static partial class GitHubReleaseCatalog
                 var size = asset.TryGetProperty("size", out var sizeElement) ? sizeElement.GetInt64() : 0;
                 var digest = asset.TryGetProperty("digest", out var digestElement) ? digestElement.GetString() : null;
                 var sha256 = digest?.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase) == true ? digest[7..] : null;
+                var releaseNotes = item.TryGetProperty("body", out var bodyElement) ? bodyElement.GetString() : null;
+                if (releaseNotes?.Length > 8_000) releaseNotes = releaseNotes[..8_000];
                 var label = $"{tag} · {nameValue}";
                 var subtitle = item.TryGetProperty("prerelease", out var prerelease) && prerelease.GetBoolean()
                     ? "Pre-release · GitHub release"
                     : "Stable release · GitHub release";
-                releases.Add((new OrbitRelease(tag, label, subtitle, downloadUrl, size, sha256, false), version));
+                releases.Add((new OrbitRelease(tag, label, subtitle, downloadUrl, size, sha256, false, releaseNotes), version));
             }
 
             if (pageCount < 100) break;
@@ -124,6 +126,7 @@ public static partial class GitHubReleaseCatalog
             }
             if (release.Size > 0 && received != release.Size)
                 throw new InvalidDataException("The downloaded file size does not match the GitHub release metadata.");
+            progress?.Report(new DownloadProgress(received, total, IsVerifying: true));
         }
 
         if (!string.IsNullOrWhiteSpace(release.Sha256))

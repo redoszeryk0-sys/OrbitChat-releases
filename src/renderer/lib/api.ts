@@ -9,6 +9,18 @@ export function normalizeServerUrl(value: string): string {
   return url.origin;
 }
 
+export function resolveServerAssetUrl(baseUrl: string, resourceUrl?: string | null): string | undefined {
+  if (!resourceUrl) return undefined;
+  if (/^(?:https?:|blob:|data:)/i.test(resourceUrl)) return resourceUrl;
+  return new URL(resourceUrl, baseUrl).toString();
+}
+
+export function avatarZoom(url?: string | null): number {
+  const zoomText = url?.match(/[?&]zoom=([\d.]+)/)?.[1];
+  const zoom = zoomText ? Number(zoomText) : 1;
+  return Number.isFinite(zoom) ? Math.max(1, Math.min(3, zoom)) : 1;
+}
+
 export async function apiRequest<T>(baseUrl: string, token: string | null, path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (token) headers.set('Authorization', `Bearer ${token}`);

@@ -206,7 +206,7 @@
                 <TextBlock Text="{Binding Label}" FontSize="11" FontWeight="SemiBold" Foreground="#EEEFF4" />
                 <TextBlock Text="{Binding Subtitle}" Margin="0,2,0,0" FontSize="9" Foreground="#8F899F" />
               </StackPanel>
-              <Border x:Name="NewestBadge" Grid.Column="1" Padding="8,4" CornerRadius="8"
+              <Border x:Name="NewestBadge" Grid.Column="1" Margin="0,0,8,0" Padding="8,4" CornerRadius="8"
                       Background="#332C48" BorderBrush="#524577" BorderThickness="1"
                       VerticalAlignment="Center" Visibility="Collapsed">
                 <StackPanel Orientation="Horizontal">
@@ -499,10 +499,10 @@
             </Border>
           </StackPanel>
 
-          <!-- Step 4: download and safely extract the selected release, then create shortcuts. -->
+          <!-- Step 4: download, verify, extract, and install the selected release. -->
           <StackPanel x:Name="ProgressStep" Visibility="Collapsed">
-            <TextBlock Text="Installing Orbit Chat." FontSize="22" FontWeight="SemiBold" />
-            <TextBlock Text="Downloading and verifying the selected release, then installing the app and creating shortcuts."
+            <TextBlock Text="Updating Orbit Chat." FontSize="22" FontWeight="SemiBold" />
+            <TextBlock Text="Follow each stage as the release is downloaded, verified, extracted, and installed."
                        Margin="0,8,0,21" FontSize="12" Foreground="{StaticResource MutedBrush}" LineHeight="19" TextWrapping="Wrap" />
             <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="10" Padding="15" Margin="0,0,0,15">
               <StackPanel>
@@ -516,13 +516,16 @@
                 <TextBlock x:Name="ProgressDetail" Text="Preparing to download the selected ZIP." Margin="0,8,0,0" FontSize="9" Foreground="{StaticResource MutedBrush}" />
               </StackPanel>
             </Border>
-            <TextBlock Text="INSTALLATION PROGRESS" Style="{StaticResource FieldLabel}" Margin="1,2,0,9" />
-            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="10" Padding="13,8">
+            <TextBlock Text="UPDATE STEPS" Style="{StaticResource FieldLabel}" Margin="1,2,0,9" />
+            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="10" Padding="13,6">
               <StackPanel>
-                <TextBlock x:Name="ProgressLineOne" Text="○   Prepare installer" Margin="0,7" FontSize="11" Foreground="#777282" />
-                <TextBlock x:Name="ProgressLineTwo" Text="○   Extract application files" Margin="0,7" FontSize="11" Foreground="#777282" />
-                <TextBlock x:Name="ProgressLineThree" Text="○   Create shortcuts" Margin="0,7" FontSize="11" Foreground="#777282" />
-                <TextBlock x:Name="ProgressLineFour" Text="○   Finish setup" Margin="0,7" FontSize="11" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineOne" Text="○   Check release and installation folder" Margin="0,5" FontSize="10" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineTwo" Text="○   Download portable app" Margin="0,5" FontSize="10" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineThree" Text="○   Verify file size and SHA-256" Margin="0,5" FontSize="10" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineFour" Text="○   Extract and validate app files" Margin="0,5" FontSize="10" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineFive" Text="○   Validate app files and prepare install" Margin="0,5" FontSize="10" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineSix" Text="○   Replace app files and register app" Margin="0,5" FontSize="10" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineSeven" Text="○   Clean up temporary files" Margin="0,5" FontSize="10" Foreground="#777282" />
               </StackPanel>
             </Border>
             <Border Background="#252232" BorderBrush="#403952" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,13,0,0">

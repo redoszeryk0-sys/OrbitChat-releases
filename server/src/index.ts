@@ -78,9 +78,9 @@ export interface OrbitServer {
 }
 
 export async function createOrbitServer(options: ServerOptions = {}): Promise<OrbitServer> {
-  const uploadDir = path.resolve(options.uploadDir ?? process.env.UPLOAD_DIR ?? path.join(process.cwd(), 'server', 'uploads'));
+  const uploadDir = path.resolve(options.uploadDir ?? process.env.UPLOAD_DIR ?? path.join(process.cwd(), 'data_server', 'uploads'));
   fs.mkdirSync(uploadDir, { recursive: true });
-  const dataDir = path.resolve(process.env.DATA_DIR ?? path.join(process.cwd(), 'server', 'data'));
+  const dataDir = path.resolve(process.env.DATA_DIR ?? path.join(process.cwd(), 'data_server'));
   const db = await Database.open(options.databasePath ?? path.join(dataDir, 'orbitchat.sqlite'));
   const app = express();
   const httpServer = http.createServer(app);
@@ -814,6 +814,17 @@ export async function createOrbitServer(options: ServerOptions = {}): Promise<Or
   });
   io.on('connection', (baseSocket) => {
     const socket = baseSocket as LiveSocket, user = socket.data.user!;
+    const typingRooms = new Map<string, number>();
+    const publishTyping = (room: string, typing: boolean) => {
+      if (typing) {
+        if (!socket.rooms.has(room)) return;
+        const now = Date.now(), last = typingRooms.get(room);
+        if (last !== undefined && now - last < 850) return;
+        typingRooms.set(room, now);
+      } else if (!typingRooms.delete(room)) return;
+      socket.to(room).emit('typing:update', { room, userId: user.id, displayName: user.displayName, typing });
+    };
+    const stopAllTyping = () => { for (const room of [...typingRooms.keys()]) publishTyping(room, false); };
     socket.emit('presence:snapshot', [...activeSockets.keys()]);
     const count = (activeSockets.get(user.id) ?? 0) + 1;
     activeSockets.set(user.id, count);
@@ -821,7 +832,10 @@ export async function createOrbitServer(options: ServerOptions = {}): Promise<Or
     if (count === 1) io.emit('presence:online', { userId: user.id });
     const leaveOtherContentRooms = (keep: string) => {
       for (const room of socket.rooms) {
-        if (room !== socket.id && room !== keep && (room.startsWith('channel:') || room.startsWith('server:') || room.startsWith('dm:'))) socket.leave(room);
+        if (room !== socket.id && room !== keep && (room.startsWith('channel:') || room.startsWith('server:') || room.startsWith('dm:'))) {
+          if (room.startsWith('channel:') || room.startsWith('dm:')) publishTyping(room, false);
+          socket.leave(room);
+        }
       }
     };
     socket.on('channel:join', (channelId: unknown, callback?: (result: { ok: boolean; error?: string }) => void) => {
@@ -838,6 +852,11 @@ export async function createOrbitServer(options: ServerOptions = {}): Promise<Or
       socket.join(`dm:${conversationId}`);
       callback?.({ ok: true });
     });
+    socket.on('typing:start', () => {
+      const room = [...socket.rooms].find((item) => item.startsWith('channel:') || item.startsWith('dm:'));
+      if (room) publishTyping(room, true);
+    });
+    socket.on('typing:stop', stopAllTyping);
     socket.on('voice:join', (channelId: unknown, callback?: (result: { ok: boolean; peers?: string[]; error?: string }) => void) => {
       if (typeof channelId !== 'string' || !canReadChannel(channelId, user.id)) return callback?.({ ok: false, error: 'You cannot join this voice channel.' });
       const channel = db.one<Row>('SELECT server_id,type FROM channels WHERE id=?', [channelId]);
@@ -875,6 +894,7 @@ export async function createOrbitServer(options: ServerOptions = {}): Promise<Or
       else activeSockets.set(user.id, remaining);
     });
     socket.on('disconnecting', () => {
+      stopAllTyping();
       for (const room of socket.rooms) if (room.startsWith('voice:')) socket.to(room).emit('voice:peer-left', { userId: user.id });
     });
   });
@@ -900,8 +920,8 @@ export async function createOrbitServer(options: ServerOptions = {}): Promise<Or
 
 if (require.main === module) {
   createOrbitServer({
-    databasePath: path.resolve(process.env.DATA_DIR ?? path.join(process.cwd(), 'server', 'data'), 'orbitchat.sqlite'),
-    uploadDir: path.resolve(process.env.UPLOAD_DIR ?? path.join(process.cwd(), 'server', 'uploads')),
+    databasePath: path.resolve(process.env.DATA_DIR ?? path.join(process.cwd(), 'data_server'), 'orbitchat.sqlite'),
+    uploadDir: path.resolve(process.env.UPLOAD_DIR ?? path.join(process.cwd(), 'data_server', 'uploads')),
     host: process.env.HOST ?? '127.0.0.1',
     port: Number(process.env.PORT ?? 8787)
   }).then((server) => printStartupAddresses(server.port)).catch((error) => { console.error('Unable to start OrbitChat server:', error); process.exitCode = 1; });

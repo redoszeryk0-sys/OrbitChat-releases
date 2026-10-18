@@ -32,7 +32,7 @@ async function json<T>(pathName: string, token?: string, init: RequestInit = {})
 }
 
 async function register(username: string) {
-  const { response, body } = await json<{ sessionToken: string; user: { id: string; username: string } }>('/api/auth/register', undefined, {
+  const { response, body } = await json<{ sessionToken: string; user: { id: string; username: string; displayName: string } }>('/api/auth/register', undefined, {
     method: 'POST', body: JSON.stringify({ username, password: 'SecureLocalPassphrase-82', displayName: username })
   });
   assert.equal(response.status, 201);
@@ -149,10 +149,26 @@ test('accounts, server permissions, message persistence, and realtime updates wo
     let aliceMentions = 0;
     const countBobMention = () => { bobMentions += 1; };
     const countAliceMention = () => { aliceMentions += 1; };
-    bobSocket.on('message:mention', countBobMention);
-    aliceSocket.on('message:mention', countAliceMention);
+  bobSocket.on('message:mention', countBobMention);
+  aliceSocket.on('message:mention', countAliceMention);
   try {
+    await acknowledgeJoin(aliceSocket, 'channel:join', channel.id);
     await acknowledgeJoin(bobSocket, 'channel:join', channel.id);
+    const channelTypingStarted = new Promise<{ room: string; userId: string; displayName: string; typing: boolean }>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('channel typing-start event timed out')), 3000);
+      bobSocket.once('typing:update', (event) => { clearTimeout(timeout); resolve(event); });
+    });
+    aliceSocket.emit('typing:start');
+    assert.deepEqual(await channelTypingStarted, { room: `channel:${channel.id}`, userId: alice.user.id, displayName: alice.user.displayName, typing: true });
+    const channelTypingStopped = new Promise<{ room: string; userId: string; typing: boolean }>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('channel typing-stop event timed out')), 3000);
+      bobSocket.once('typing:update', (event) => { clearTimeout(timeout); resolve(event); });
+    });
+    aliceSocket.emit('typing:stop');
+    const channelStopEvent = await channelTypingStopped;
+    assert.equal(channelStopEvent.room, `channel:${channel.id}`);
+    assert.equal(channelStopEvent.userId, alice.user.id);
+    assert.equal(channelStopEvent.typing, false);
     const delivered = new Promise<{ id: string; content: string; mentions: Array<{ userId: string; username: string; displayName: string }> }>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('realtime message timed out')), 5000);
       bobSocket.once('message:new', (message) => { clearTimeout(timeout); resolve(message); });
@@ -216,7 +232,26 @@ test('friend requests and direct messages are permission-checked', async () => {
   const juneSocket = await connectedClient(june.sessionToken);
   const kaiSocket = await connectedClient(kai.sessionToken);
   try {
+    await acknowledgeJoin(juneSocket, 'dm:join', accepted.body.conversationId);
     await acknowledgeJoin(kaiSocket, 'dm:join', accepted.body.conversationId);
+    const dmTypingStarted = new Promise<{ room: string; userId: string; typing: boolean }>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('DM typing-start event timed out')), 3000);
+      kaiSocket.once('typing:update', (event) => { clearTimeout(timeout); resolve(event); });
+    });
+    juneSocket.emit('typing:start');
+    const dmStartEvent = await dmTypingStarted;
+    assert.equal(dmStartEvent.room, `dm:${accepted.body.conversationId}`);
+    assert.equal(dmStartEvent.userId, june.user.id);
+    assert.equal(dmStartEvent.typing, true);
+    const dmTypingStopped = new Promise<{ room: string; userId: string; typing: boolean }>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('DM typing-stop event timed out')), 3000);
+      kaiSocket.once('typing:update', (event) => { clearTimeout(timeout); resolve(event); });
+    });
+    juneSocket.emit('typing:stop');
+    const dmStopEvent = await dmTypingStopped;
+    assert.equal(dmStopEvent.room, `dm:${accepted.body.conversationId}`);
+    assert.equal(dmStopEvent.userId, june.user.id);
+    assert.equal(dmStopEvent.typing, false);
     const incoming = new Promise<{ content: string; conversationId: string }>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('direct message timed out')), 5000);
       kaiSocket.once('dm:message', (message) => { clearTimeout(timeout); resolve(message); });

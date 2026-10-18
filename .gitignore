@@ -12,7 +12,11 @@ server/data/*.db
 server/uploads/*
 !server/uploads/.gitkeep
 !server/data/.gitkeep
+/data_server/*
+!/data_server/.gitkeep
 server-config/server.env
 server-config/.server.env.*
 installer/bin/
 installer/obj/
+installer/Updater/bin/
+installer/Updater/obj/

@@ -1,9 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, net as electronNet, Notification, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, net as electronNet, Notification, safeStorage, session, shell } from 'electron';
 import { createWriteStream } from 'node:fs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { checkForOrbitChatUpdate } from './updateCatalog';
+import { startVerifiedUpdater } from './updaterLauncher';
 
 let mainWindow: BrowserWindow | null = null;
 let trustedDevOrigin = 'http://127.0.0.1:5173';
@@ -47,6 +49,21 @@ function registerIpcHandlers(): void {
   ipcMain.handle('orbit:runtime', async (event) => {
     assertTrustedSender(event);
     return runtimeInfo();
+  });
+  ipcMain.handle('orbit:updates:check', async (event) => {
+    assertTrustedSender(event);
+    if (!app.isPackaged) return null;
+    return checkForOrbitChatUpdate(app.getVersion());
+  });
+  ipcMain.handle('orbit:updates:start', async (event) => {
+    assertTrustedSender(event);
+    if (!app.isPackaged || path.basename(process.execPath).toLowerCase() !== 'orbit chat.exe')
+      throw new Error('The Orbit Chat updater is available only in a packaged Windows installation.');
+    const installDirectory = path.dirname(process.execPath);
+    if (!fs.existsSync(path.join(installDirectory, 'resources', 'app.asar')))
+      throw new Error('The current Orbit Chat installation could not be verified.');
+    await startVerifiedUpdater(installDirectory, process.pid, () => app.quit());
+    return true;
   });
   ipcMain.handle('orbit:notify', (event, title: unknown, body: unknown) => {
     assertTrustedSender(event);
@@ -95,6 +112,12 @@ function registerIpcHandlers(): void {
       await shell.openExternal(url.href);
       return true;
     } catch { return false; }
+  });
+  ipcMain.handle('orbit:clipboard:write', (event, value: unknown) => {
+    assertTrustedSender(event);
+    if (typeof value !== 'string' || value.length > 50_000) throw new Error('Clipboard text is invalid.');
+    clipboard.writeText(value);
+    return true;
   });
   ipcMain.handle('orbit:download-attachment', async (event, baseInput: unknown, attachmentPathInput: unknown, tokenInput: unknown) => {
     assertTrustedSender(event);

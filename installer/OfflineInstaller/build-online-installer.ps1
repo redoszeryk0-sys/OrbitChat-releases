@@ -24,7 +24,14 @@ $temporaryInstallerFile = "$installerFile.new"
 Copy-Item -LiteralPath $publishedFile -Destination $temporaryInstallerFile -Force
 Move-Item -LiteralPath $temporaryInstallerFile -Destination $installerFile -Force
 $artifact = Get-Item -LiteralPath $installerFile
-$hash = (Get-FileHash -LiteralPath $installerFile -Algorithm SHA256).Hash
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$stream = [System.IO.File]::OpenRead($installerFile)
+try {
+    $hash = [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '')
+} finally {
+    $stream.Dispose()
+    $sha256.Dispose()
+}
 Write-Host "Online installer ready: $($artifact.FullName)"
 Write-Host "Size: $([math]::Round($artifact.Length / 1MB, 1)) MiB"
 Write-Host "SHA-256: $hash"

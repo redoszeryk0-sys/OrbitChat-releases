@@ -43,29 +43,3 @@ export function playVoiceSound(cue: VoiceCue, enabled: boolean) {
   if (context.state === 'suspended') void context.resume().then(play).catch(() => undefined);
   else play();
 }
-
-export function playCosmicVoiceChime(enabled: boolean) {
-  if (!enabled) return;
-  primeVoiceSounds(enabled);
-  const context = voiceAudioContext;
-  if (!context || context.state === 'closed') return;
-  const play = () => {
-    const now = context.currentTime + 0.02;
-    [783.99, 987.77, 1174.66].forEach((frequency, index) => {
-      const start = now + index * 0.09;
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(frequency, start);
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(0.018, start + 0.035);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.52);
-      oscillator.connect(gain);
-      gain.connect(context.destination);
-      oscillator.start(start);
-      oscillator.stop(start + 0.54);
-    });
-  };
-  if (context.state === 'suspended') void context.resume().then(play).catch(() => undefined);
-  else play();
-}

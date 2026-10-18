@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO.Compression;
 using System.IO;
 using System.Net.Http;
@@ -24,6 +25,7 @@ public partial class MainWindow : Window
     private const string InstallMarkerName = ".orbitchat-install.json";
     private const string InstallMarkerId = "OrbitChat.OnlineInstaller.v1";
     private const long MaximumExpandedArchiveBytes = 3L * 1024 * 1024 * 1024;
+    private readonly record struct ArchiveExtractionProgress(long ExtractedBytes, long TotalBytes, int CompletedEntries, int TotalEntries);
 
     private readonly ObservableCollection<OrbitRelease> _releases = [];
     private bool _isInitializing = true;
@@ -179,7 +181,7 @@ public partial class MainWindow : Window
         BackButton.Visibility = _step is 0 or 4 or 5 ? Visibility.Hidden : Visibility.Visible;
         NextButton.Content = _step switch
         {
-            3 => "Install Orbit Chat  →",
+            3 => $"{GetSelectedAction()} Orbit Chat  →",
             4 => "Installing…",
             5 => "Exit",
             _ => "Next  →",
@@ -247,21 +249,79 @@ public partial class MainWindow : Window
             ActionIndicator.Background = new SolidColorBrush(MediaColor.FromRgb(237, 105, 116));
             return;
         }
-        var heading = installed is null ? "Install" : StringComparer.Ordinal.Equals(installed, release.Tag) ? "Repair" : "Update";
+        var heading = GetReleaseAction(release.Tag, installed);
         ActionHeading.Text = heading;
-        ActionDescription.Text = installed is null
-            ? $"Orbit Chat {release.Tag} will be downloaded from GitHub."
-            : $"Orbit Chat {installed} will be replaced with {release.Tag}.";
-        ActionIndicator.Background = new SolidColorBrush(release.IsNewest
-            ? MediaColor.FromRgb(81, 199, 139) : MediaColor.FromRgb(136, 123, 207));
+        ActionDescription.Text = heading switch
+        {
+            "Install" => $"Orbit Chat {release.Tag} will be downloaded from GitHub.",
+            "Repair" => $"Orbit Chat {installed} will be repaired with version {release.Tag}.",
+            "Downgrade" => $"Orbit Chat {installed} will be downgraded to version {release.Tag}.",
+            _ => $"Orbit Chat {installed} will be updated to version {release.Tag}.",
+        };
+        ActionIndicator.Background = new SolidColorBrush(heading == "Downgrade"
+            ? MediaColor.FromRgb(208, 153, 94)
+            : release.IsNewest ? MediaColor.FromRgb(81, 199, 139) : MediaColor.FromRgb(136, 123, 207));
     }
 
     private void UpdateReviewSummary()
     {
         var release = VersionSelector.SelectedItem as OrbitRelease;
-        ReviewAction.Text = release is null ? "No release selected" : DetectInstalledVersion() is null ? "Install" : "Update / repair";
+        ReviewAction.Text = release is null ? "No release selected" : GetReleaseAction(release.Tag, DetectInstalledVersion());
         ReviewVersion.Text = release is null ? "No version selected" : $"Orbit Chat {release.Tag}";
         ReviewPath.Text = InstallPathBox.Text;
+    }
+
+    private string GetSelectedAction() => VersionSelector.SelectedItem is OrbitRelease release
+        ? GetReleaseAction(release.Tag, DetectInstalledVersion())
+        : "Install";
+
+    private static string GetReleaseAction(string selectedVersion, string? installedVersion)
+    {
+        if (installedVersion is null) return "Install";
+        var comparison = CompareReleaseVersions(selectedVersion, installedVersion);
+        return comparison == 0 ? "Repair" : comparison < 0 ? "Downgrade" : "Update";
+    }
+
+    private static int CompareReleaseVersions(string left, string right)
+    {
+        static (Version? Core, string? Prerelease) Parse(string value)
+        {
+            var normalized = value.Trim().TrimStart('v', 'V');
+            var buildIndex = normalized.IndexOf('+');
+            if (buildIndex >= 0) normalized = normalized[..buildIndex];
+            string? prerelease = null;
+            var prereleaseIndex = normalized.IndexOf('-');
+            if (prereleaseIndex >= 0)
+            {
+                prerelease = normalized[(prereleaseIndex + 1)..];
+                normalized = normalized[..prereleaseIndex];
+            }
+            if (normalized.Count(character => character == '.') == 2) normalized += ".0";
+            return (Version.TryParse(normalized, out var version) ? version : null, prerelease);
+        }
+
+        var leftVersion = Parse(left);
+        var rightVersion = Parse(right);
+        if (leftVersion.Core is null || rightVersion.Core is null)
+            return StringComparer.OrdinalIgnoreCase.Compare(left, right);
+
+        var coreComparison = leftVersion.Core.CompareTo(rightVersion.Core);
+        if (coreComparison != 0) return coreComparison;
+        if (leftVersion.Prerelease is null) return rightVersion.Prerelease is null ? 0 : 1;
+        if (rightVersion.Prerelease is null) return -1;
+
+        var leftIdentifiers = leftVersion.Prerelease.Split('.');
+        var rightIdentifiers = rightVersion.Prerelease.Split('.');
+        for (var index = 0; index < Math.Min(leftIdentifiers.Length, rightIdentifiers.Length); index++)
+        {
+            var leftNumeric = long.TryParse(leftIdentifiers[index], NumberStyles.None, CultureInfo.InvariantCulture, out var leftNumber);
+            var rightNumeric = long.TryParse(rightIdentifiers[index], NumberStyles.None, CultureInfo.InvariantCulture, out var rightNumber);
+            var comparison = leftNumeric && rightNumeric ? leftNumber.CompareTo(rightNumber)
+                : leftNumeric ? -1 : rightNumeric ? 1
+                : StringComparer.Ordinal.Compare(leftIdentifiers[index], rightIdentifiers[index]);
+            if (comparison != 0) return comparison;
+        }
+        return leftIdentifiers.Length.CompareTo(rightIdentifiers.Length);
     }
 
     private string? DetectInstalledVersion()
@@ -292,15 +352,15 @@ public partial class MainWindow : Window
         CloseButton.IsEnabled = false;
         ProgressGlow.Width = 16;
         ProgressPercent.Text = "0%";
-        ProgressCaption.Text = "Preparing download…";
-        ProgressDetail.Text = $"Orbit Chat {release.Tag} · {GitHubReleaseCatalog.FormatSize(release.Size)}";
+        ProgressCaption.Text = "Checking the release and installation folder…";
+        ProgressDetail.Text = $"Preparing Orbit Chat {release.Tag} · {GitHubReleaseCatalog.FormatSize(release.Size)}.";
         UpdateProgressSteps();
         ShowStep(4);
         try
         {
             await InstallReleaseAsync(release);
             _installedAppPath = Path.Combine(Path.GetFullPath(InstallPathBox.Text.Trim()), AppExecutableName);
-            _progressTick = 4;
+            _progressTick = 7;
             ProgressCaption.Text = "Installation complete.";
             ProgressDetail.Text = "Orbit Chat is installed. Your app data and settings were kept.";
             ProgressPercent.Text = "100%";
@@ -374,30 +434,66 @@ public partial class MainWindow : Window
         var newMoved = false;
         try
         {
-            _progressTick = 0;
+            _progressTick = 1;
+            UpdateProgressSteps();
             ProgressCaption.Text = "Downloading Orbit Chat…";
             ProgressDetail.Text = "Connecting securely to GitHub Releases.";
-            UpdateProgressSteps();
             var progress = new Progress<DownloadProgress>(value =>
             {
+                if (value.IsVerifying)
+                {
+                    _progressTick = 2;
+                    ProgressCaption.Text = "Verifying the downloaded ZIP…";
+                    ProgressPercent.Text = "43%";
+                    ProgressGlow.Width = 172;
+                    ProgressDetail.Text = string.IsNullOrWhiteSpace(release.Sha256)
+                        ? "Checking the advertised download size; GitHub did not provide a SHA-256 digest."
+                        : "Checking the downloaded file against GitHub’s SHA-256 digest.";
+                    UpdateProgressSteps();
+                    return;
+                }
                 var fraction = value.TotalBytes is > 0 ? Math.Clamp(value.ReceivedBytes / (double)value.TotalBytes.Value, 0, 1) : 0;
-                ProgressPercent.Text = value.TotalBytes is > 0 ? $"{(int)(fraction * 38) + 5}%" : "Downloading…";
-                ProgressGlow.Width = Math.Max(16, 400 * Math.Max(.04, fraction * .42));
-                ProgressDetail.Text = $"Downloaded {GitHubReleaseCatalog.FormatSize(value.ReceivedBytes)} of {GitHubReleaseCatalog.FormatSize(value.TotalBytes ?? 0)}.";
+                var percent = value.TotalBytes is > 0 ? (int)(fraction * 38) + 5 : 5;
+                ProgressPercent.Text = value.TotalBytes is > 0 ? $"{percent}%" : "Downloading…";
+                ProgressGlow.Width = Math.Max(16, 400 * percent / 100d);
+                ProgressDetail.Text = value.TotalBytes is > 0
+                    ? $"Downloaded {GitHubReleaseCatalog.FormatSize(value.ReceivedBytes)} of {GitHubReleaseCatalog.FormatSize(value.TotalBytes.Value)}."
+                    : $"Downloaded {GitHubReleaseCatalog.FormatSize(value.ReceivedBytes)}.";
             });
             await GitHubReleaseCatalog.DownloadAsync(release, downloadPath, progress);
 
             Directory.CreateDirectory(stage);
-            ProgressCaption.Text = "Verifying and extracting the ZIP…";
-            ProgressDetail.Text = "Checking every archive path before writing files.";
-            _progressTick = 1;
-            ExtractReleaseArchive(downloadPath, stage);
+            _progressTick = 3;
+            ProgressCaption.Text = "Extracting the verified app files…";
+            ProgressDetail.Text = "Safely extracting the release into a staging folder.";
+            ProgressPercent.Text = "45%";
+            ProgressGlow.Width = 180;
+            UpdateProgressSteps();
+            var extractionProgress = new Progress<ArchiveExtractionProgress>(value =>
+            {
+                var fraction = value.TotalBytes > 0 ? Math.Clamp(value.ExtractedBytes / (double)value.TotalBytes, 0, 1) : 1;
+                var percent = 45 + (int)(fraction * 37);
+                ProgressPercent.Text = $"{percent}%";
+                ProgressGlow.Width = Math.Max(16, 400 * percent / 100d);
+                ProgressDetail.Text = $"Extracted {GitHubReleaseCatalog.FormatSize(value.ExtractedBytes)} of {GitHubReleaseCatalog.FormatSize(value.TotalBytes)} · {value.CompletedEntries} of {value.TotalEntries} files.";
+            });
+            await ExtractReleaseArchiveAsync(downloadPath, stage, extractionProgress);
 
+            _progressTick = 4;
+            ProgressCaption.Text = "Validating the extracted app…";
+            ProgressDetail.Text = "Confirming the executable and application archive are present.";
+            ProgressPercent.Text = "84%";
+            ProgressGlow.Width = 336;
+            UpdateProgressSteps();
             var appExe = Path.Combine(stage, AppExecutableName);
             if (!File.Exists(appExe) || !File.Exists(Path.Combine(stage, "resources", "app.asar")))
                 throw new InvalidDataException("The ZIP does not contain a valid Orbit Chat portable app.");
 
-            File.Copy(runningInstaller, Path.Combine(stage, UninstallerName), overwrite: false);
+            ProgressCaption.Text = "Preparing uninstall support…";
+            ProgressDetail.Text = "Copying the signed-off setup helper into the staged app.";
+            ProgressPercent.Text = "85%";
+            ProgressGlow.Width = 340;
+            await Task.Run(() => File.Copy(runningInstaller, Path.Combine(stage, UninstallerName), overwrite: false));
             var marker = new
             {
                 id = InstallMarkerId,
@@ -408,11 +504,12 @@ public partial class MainWindow : Window
             };
             await File.WriteAllTextAsync(Path.Combine(stage, InstallMarkerName), JsonSerializer.Serialize(marker));
 
-            ProgressCaption.Text = "Installing files and registering Orbit Chat…";
-            ProgressDetail.Text = "Creating shortcuts and the Windows Installed apps entry.";
-            _progressTick = 2;
+            ProgressCaption.Text = "Replacing the installed app files…";
+            ProgressDetail.Text = "The staged app is verified; your account data remains untouched.";
+            _progressTick = 5;
             UpdateProgressSteps();
-            ProgressPercent.Text = "88%";
+            ProgressPercent.Text = "87%";
+            ProgressGlow.Width = 348;
 
             if (Directory.Exists(target))
             {
@@ -421,10 +518,23 @@ public partial class MainWindow : Window
             }
             Directory.Move(stage, target);
             newMoved = true;
+            ProgressCaption.Text = "Replacing the app and creating shortcuts…";
+            ProgressDetail.Text = "Updating the app files, Desktop, Start menu, and Installed apps entry.";
+            ProgressPercent.Text = "91%";
+            ProgressGlow.Width = 364;
             CreateShortcuts(Path.Combine(target, AppExecutableName), release.Tag);
             RegisterUninstallEntry(target, release.Tag);
 
-            if (oldMoved && Directory.Exists(backup)) Directory.Delete(backup, recursive: true);
+            _progressTick = 6;
+            ProgressCaption.Text = "Cleaning up previous files…";
+            ProgressDetail.Text = "Removing files from the previous app version.";
+            ProgressPercent.Text = "Cleaning…";
+            ProgressGlow.Width = 376;
+            UpdateProgressSteps();
+            if (oldMoved && Directory.Exists(backup))
+                await Task.Run(() => Directory.Delete(backup, recursive: true));
+            ProgressPercent.Text = "99%";
+            ProgressGlow.Width = 396;
             if (replacingLegacyRegistration)
             {
                 try
@@ -435,14 +545,17 @@ public partial class MainWindow : Window
                 }
                 catch { /* The new registration is already committed; a stale legacy entry is harmless. */ }
             }
+            _progressTick = 7;
+            ProgressPercent.Text = "100%";
             ProgressGlow.Width = 400;
+            UpdateProgressSteps();
         }
         catch
         {
             if (newMoved && Directory.Exists(target))
             {
                 try { RemoveShortcuts(); } catch { }
-                try { Directory.Delete(target, recursive: true); } catch { }
+                try { await Task.Run(() => Directory.Delete(target, recursive: true)); } catch { }
             }
             if (oldMoved && Directory.Exists(backup) && !Directory.Exists(target))
             {
@@ -461,7 +574,7 @@ public partial class MainWindow : Window
             {
                 Registry.CurrentUser.DeleteSubKeyTree($@"Software\Microsoft\Windows\CurrentVersion\Uninstall\{UninstallKeyName}", throwOnMissingSubKey: false);
             }
-            if (Directory.Exists(stage)) Directory.Delete(stage, recursive: true);
+            if (Directory.Exists(stage)) await Task.Run(() => Directory.Delete(stage, recursive: true));
             throw;
         }
         finally
@@ -470,49 +583,56 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ExtractReleaseArchive(string archivePath, string destination)
+    private async Task ExtractReleaseArchiveAsync(string archivePath, string destination, IProgress<ArchiveExtractionProgress> progress)
     {
-        using var archive = ZipFile.OpenRead(archivePath);
-        if (archive.Entries.Count is < 10 or > 10_000)
-            throw new InvalidDataException("The selected ZIP has an unexpected number of files.");
-        long expandedBytes = 0;
-        for (var index = 0; index < archive.Entries.Count; index++)
+        await Task.Run(async () =>
         {
-            var entry = archive.Entries[index];
-            var relative = entry.FullName.Replace('\\', '/');
-            if (relative.StartsWith('/') || Path.IsPathRooted(relative) ||
-                relative.Split('/').Any(part => part is ".." or ".") || relative.Contains(':'))
-                throw new SecurityException("The release ZIP contains an unsafe file path.");
-            var unixFileType = (entry.ExternalAttributes >> 16) & 0xF000;
-            if (unixFileType == 0xA000)
-                throw new SecurityException("The release ZIP contains an unsupported symbolic link.");
-
-            expandedBytes = checked(expandedBytes + entry.Length);
-            if (expandedBytes > MaximumExpandedArchiveBytes)
+            using var archive = ZipFile.OpenRead(archivePath);
+            if (archive.Entries.Count is < 10 or > 10_000)
+                throw new InvalidDataException("The selected ZIP has an unexpected number of files.");
+            var totalBytes = archive.Entries.Sum(entry => entry.Length);
+            if (totalBytes > MaximumExpandedArchiveBytes)
                 throw new InvalidDataException("The expanded app exceeds the installer's size limit.");
-            var outputPath = Path.GetFullPath(Path.Combine(destination, relative.Replace('/', Path.DirectorySeparatorChar)));
-            if (!outputPath.StartsWith(destination + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                throw new SecurityException("A release ZIP entry would write outside the install folder.");
-            if (relative.EndsWith('/'))
+            long extractedBytes = 0;
+            long lastReportedBytes = 0;
+            var buffer = new byte[131072];
+            for (var index = 0; index < archive.Entries.Count; index++)
             {
-                Directory.CreateDirectory(outputPath);
+                var entry = archive.Entries[index];
+                var relative = entry.FullName.Replace('\\', '/');
+                if (relative.StartsWith('/') || Path.IsPathRooted(relative) ||
+                    relative.Split('/').Any(part => part is ".." or ".") || relative.Contains(':'))
+                    throw new SecurityException("The release ZIP contains an unsafe file path.");
+                var unixFileType = (entry.ExternalAttributes >> 16) & 0xF000;
+                if (unixFileType == 0xA000)
+                    throw new SecurityException("The release ZIP contains an unsupported symbolic link.");
+
+                var outputPath = Path.GetFullPath(Path.Combine(destination, relative.Replace('/', Path.DirectorySeparatorChar)));
+                if (!outputPath.StartsWith(destination + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    throw new SecurityException("A release ZIP entry would write outside the install folder.");
+                if (relative.EndsWith('/')) Directory.CreateDirectory(outputPath);
+                else
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                    await using var input = entry.Open();
+                    await using var output = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                        buffer.Length, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                    int read;
+                    while ((read = await input.ReadAsync(buffer.AsMemory())) > 0)
+                    {
+                        await output.WriteAsync(buffer.AsMemory(0, read));
+                        extractedBytes = checked(extractedBytes + read);
+                        if (extractedBytes - lastReportedBytes >= 8L * 1024 * 1024)
+                        {
+                            progress.Report(new ArchiveExtractionProgress(extractedBytes, totalBytes, index, archive.Entries.Count));
+                            lastReportedBytes = extractedBytes;
+                        }
+                    }
+                    await output.FlushAsync();
+                }
+                progress.Report(new ArchiveExtractionProgress(extractedBytes, totalBytes, index + 1, archive.Entries.Count));
             }
-            else
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-                using var input = entry.Open();
-                using var output = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                    131072, FileOptions.SequentialScan);
-                input.CopyTo(output);
-            }
-            if (index % 8 == 0)
-            {
-                var fraction = (index + 1d) / archive.Entries.Count;
-                ProgressPercent.Text = $"{45 + (int)(fraction * 38)}%";
-                ProgressGlow.Width = Math.Max(16, 400 * (.45 + fraction * .38));
-                ProgressDetail.Text = $"Extracting files · {index + 1} of {archive.Entries.Count}.";
-            }
-        }
+        });
     }
 
     private static bool IsManagedInstall(string directory)
@@ -660,8 +780,13 @@ public partial class MainWindow : Window
 
     private void UpdateProgressSteps()
     {
-        var rows = new[] { ProgressLineOne, ProgressLineTwo, ProgressLineThree, ProgressLineFour };
-        var captions = new[] { "Find the selected GitHub release", "Download and verify the portable ZIP", "Install files and create shortcuts", "Register the uninstaller" };
+        var rows = new[] { ProgressLineOne, ProgressLineTwo, ProgressLineThree, ProgressLineFour, ProgressLineFive, ProgressLineSix, ProgressLineSeven };
+        var captions = new[]
+        {
+            "Check release and installation folder", "Download portable app", "Verify file size and SHA-256",
+            "Extract and validate app files", "Validate app files and prepare install", "Replace app files and register app",
+            "Clean up temporary files",
+        };
         for (var index = 0; index < rows.Length; index++)
         {
             var completed = index < _progressTick;

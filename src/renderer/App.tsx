@@ -3,20 +3,20 @@ import { io, type Socket } from 'socket.io-client';
 import {
   Activity, ArrowDown, AtSign, Bell, BellOff, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp,
   Compass, Copy, Download, File, FileImage, FolderPlus, Hash, Headphones, Image, Info, LoaderCircle, LogOut, Menu,
-  MessageCircle, Mic, MicOff, MoreHorizontal, Paperclip, Plus, Reply, Search, Send, Settings, Smile, Sparkles,
-  Sticker, Sun, Moon, Telescope, Trash2, Users, Volume2, VolumeX, X, Video, Wifi, Zap
+  MessageCircle, Mic, MicOff, MoreHorizontal, Paperclip, Plus, Reply, Search, Send, Settings, Smile,
+  Sticker, Sun, Moon, Trash2, Users, Volume2, VolumeX, X, Video, Zap
 } from 'lucide-react';
-import { ApiError, apiRequest, formatBytes, formatTransferRate, getLocalAvatarBackup, listLocalAvatarBackups, normalizeServerUrl, saveLocalAvatarBackup, uploadAttachmentsWithProgress } from './lib/api';
+import { ApiError, apiRequest, avatarZoom, formatBytes, formatTransferRate, getLocalAvatarBackup, listLocalAvatarBackups, normalizeServerUrl, resolveServerAssetUrl, saveLocalAvatarBackup, uploadAttachmentsWithProgress } from './lib/api';
 import { unknownSlashCommandMessage } from './lib/commands';
+import { isNearLatest, shouldSendComposerOnEnter, uniqueSelectableAudioDevices } from './lib/chatUi';
 import { findMentionMatches, insertMention, mentionQueryAtCaret, mentionedMemberIds } from './lib/mentions';
 import type { Attachment, Category, Channel, Member, Message, Server, User } from './lib/types';
 import { useVoice } from './lib/useVoice';
 import { MessageRow } from './components/MessageRow';
 import { OrbitEmojiPicker } from './components/OrbitEmojiPicker';
-import { playCosmicVoiceChime } from './lib/voiceSounds';
 import './styles.css';
 
-type ThemeMode = 'dark' | 'light' | 'system' | 'cosmic';
+type ThemeMode = 'dark' | 'light' | 'system';
 type ConnectionStatus = 'checking' | 'online' | 'offline';
 type PickerMode = 'emoji' | 'gif' | 'sticker' | 'attach' | null;
 type DialogMode = 'server' | 'join' | 'channel' | 'category' | 'invite' | 'profile' | 'settings' | null;
@@ -36,6 +36,7 @@ interface ToastValue { id: number; text: string }
 interface ChannelMessagePayload { content: string; kind: 'text' | 'gif'; mediaUrl?: string; replyToId?: string; attachmentIds: string[]; mentions: string[] }
 interface PendingSend { payload: ChannelMessagePayload; files: File[]; channelId?: string; conversationId?: string; uploaded?: Attachment[]; gif?: GifItem; gifQuery?: string; abortController?: AbortController }
 interface QueuedFile { id: string; file: File }
+interface TypingUser { room: string; userId: string; displayName: string }
 
 const stickers = [
   { emoji: '🌙', name: 'Orbit moon' }, { emoji: '🪐', name: 'Ringed planet' }, { emoji: '🚀', name: 'Launch' },
@@ -53,14 +54,12 @@ async function readLocalAvatarHistory(userId: string): Promise<AvatarHistoryItem
 }
 
 function absoluteAvatarUrl(url?: string | null) {
-  if (!url) return undefined;
-  return url.startsWith('/') ? `${avatarApiUrl}${url}` : url;
+  return resolveServerAssetUrl(avatarApiUrl, url);
 }
 
 function Avatar({ label, url, size = 'normal', status }: { label: string; url?: string | null; size?: 'normal' | 'small' | 'large'; status?: string }) {
   const first = label.trim().charAt(0).toUpperCase() || '?';
-  const zoomValue = url?.match(/[?&]zoom=([\d.]+)/)?.[1];
-  const zoom = zoomValue ? Math.max(1, Math.min(3, Number(zoomValue))) : 1;
+  const zoom = avatarZoom(url);
   return <span className={`avatar avatar-${size}`}>
     {url ? <img src={absoluteAvatarUrl(url)} alt="" style={zoom === 1 ? undefined : { transform: `scale(${zoom})` }} /> : <span>{first}</span>}
     {status && <i className={`presence-dot presence-${status}`} />}
@@ -91,20 +90,14 @@ function readUnreadChannelIds() {
   } catch { return new Set<string>(); }
 }
 
-function readDiscoveredEasterEggs() {
-  try {
-    const saved: unknown = JSON.parse(localStorage.getItem('orbit.easterEggs') ?? '[]');
-    return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === 'string' && id !== 'orbit-command') : [];
-  } catch { return []; }
-}
-
 function App() {
   const [runtime, setRuntime] = useState<Runtime | null>(null);
   const [sessionCheckComplete, setSessionCheckComplete] = useState(false);
   const [bootMessage, setBootMessage] = useState('Starting Orbit Chat');
   const [apiUrl, setApiUrl] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('checking');
-  const [connectionUrl, setConnectionUrl] = useState(localStorage.getItem('orbit.serverUrl') ?? '');
+  const [availableUpdate, setAvailableUpdate] = useState<{ tag: string; version: string; notes: string } | null>(null);
+  const [updaterLaunching, setUpdaterLaunching] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [servers, setServers] = useState<Server[]>([]);
@@ -140,6 +133,7 @@ function App() {
   const [channelSettingsBusy, setChannelSettingsBusy] = useState(false);
   const [channelMenu, setChannelMenu] = useState<ChannelMenuState | null>(null);
   const [channelAreaMenu, setChannelAreaMenu] = useState<ChannelAreaMenuState | null>(null);
+  const [activeMessageMenuId, setActiveMessageMenuId] = useState<string | null>(null);
   const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(new Set());
   const [mutedChannelIds, setMutedChannelIds] = useState<Set<string>>(readMutedChannelIds);
   const [unreadChannelIds, setUnreadChannelIds] = useState<Set<string>>(readUnreadChannelIds);
@@ -164,12 +158,10 @@ function App() {
   const [speakingUserIds, setSpeakingUserIds] = useState<Set<string>>(new Set());
   const [voiceDuration, setVoiceDuration] = useState(0);
   const [mediaViewer, setMediaViewer] = useState<{ url: string; name: string; zoom: number } | null>(null);
-  const [theme, setTheme] = useState<ThemeMode>((localStorage.getItem('orbit.theme') as ThemeMode) ?? 'dark');
-  const [cosmicThemeUnlocked, setCosmicThemeUnlocked] = useState(localStorage.getItem('orbit.cosmicThemeUnlocked') === 'on');
-  const [discoveredEasterEggs, setDiscoveredEasterEggs] = useState<string[]>(readDiscoveredEasterEggs);
-  const [konamiCelebration, setKonamiCelebration] = useState(false);
-  const [goodnightMoon, setGoodnightMoon] = useState(false);
-  const [idleMascotVisible, setIdleMascotVisible] = useState(false);
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    const savedTheme = localStorage.getItem('orbit.theme');
+    return savedTheme === 'light' || savedTheme === 'system' ? savedTheme : 'dark';
+  });
   const [systemPrefersLight, setSystemPrefersLight] = useState(false);
   const [fontScale, setFontScale] = useState(Number(localStorage.getItem('orbit.fontScale') ?? 100));
   const [desktopNotifications, setDesktopNotifications] = useState(localStorage.getItem('orbit.notifications') === 'on');
@@ -189,52 +181,78 @@ function App() {
   const [activeDmUser, setActiveDmUser] = useState<string | null>(null);
   const [activeDmUserId, setActiveDmUserId] = useState<string | null>(null);
   const [dmMessages, setDmMessages] = useState<Message[]>([]);
+  const [isAtLatest, setIsAtLatest] = useState(true);
+  const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const voiceSessionRef = useRef<{ channelId: string; startedAt: number } | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
-  const lastMessageCount = useRef(0);
-  const prependScrollHeight = useRef<number | null>(null);
+  const initialScrollGenerationRef = useRef(0);
+  const loadingOlderMessagesRef = useRef(false);
+  const olderMessagesGenerationRef = useRef(0);
+  const dmLoadGenerationRef = useRef(0);
+  const lastChannelMessageCount = useRef(0);
+  const lastDmMessageCount = useRef(0);
+  const prependScrollPosition = useRef<{ channelId: string; scrollHeight: number; scrollTop: number } | null>(null);
   const selectedServerRef = useRef<string | null>(null);
   const selectedChannelRef = useRef<string | null>(null);
   const activeDmRef = useRef<string | null>(null);
   const connectionStatusRef = useRef<ConnectionStatus>('checking');
   const desktopNotificationsRef = useRef(false);
   const mutedChannelIdsRef = useRef(mutedChannelIds);
+  const voiceInputDeviceIdRef = useRef(voiceInputDeviceId);
+  const voiceOutputDeviceIdRef = useRef(voiceOutputDeviceId);
   const toastCounter = useRef(0);
   const pendingSendsRef = useRef(new Map<string, PendingSend>());
   const sendingMessageIdsRef = useRef(new Set<string>());
-  const discoveredEasterEggsRef = useRef(new Set(discoveredEasterEggs));
-  const logoSecretClicksRef = useRef<number[]>([]);
-  const previousVoiceChannelRef = useRef<string | null>(null);
+  const typingStopTimerRef = useRef<number | null>(null);
+  const typingActiveRef = useRef(false);
+  const remoteTypingTimersRef = useRef(new Map<string, number>());
+  const notifiedUpdateVersionRef = useRef<string | null>(localStorage.getItem('orbit.notifiedUpdateVersion'));
   selectedServerRef.current = selectedServerId;
   selectedChannelRef.current = selectedChannelId;
   activeDmRef.current = activeDmId;
   connectionStatusRef.current = connectionStatus;
   desktopNotificationsRef.current = desktopNotifications;
   mutedChannelIdsRef.current = mutedChannelIds;
+  voiceInputDeviceIdRef.current = voiceInputDeviceId;
+  voiceOutputDeviceIdRef.current = voiceOutputDeviceId;
 
   const notify = useCallback((text: string) => {
     const id = ++toastCounter.current;
     setToast({ id, text });
     window.setTimeout(() => setToast((current) => current?.id === id ? null : current), 3200);
   }, []);
-  const markEasterEgg = useCallback((eggId: string, message: string) => {
-    if (discoveredEasterEggsRef.current.has(eggId)) return;
-    const next = new Set(discoveredEasterEggsRef.current);
-    next.add(eggId);
-    discoveredEasterEggsRef.current = next;
-    setDiscoveredEasterEggs([...next]);
-    localStorage.setItem('orbit.easterEggs', JSON.stringify([...next]));
-    notify(message);
-  }, [notify]);
+  const stopTyping = useCallback(() => {
+    if (typingStopTimerRef.current !== null) window.clearTimeout(typingStopTimerRef.current);
+    typingStopTimerRef.current = null;
+    if (typingActiveRef.current) socket?.emit('typing:stop');
+    typingActiveRef.current = false;
+  }, [socket]);
+  const reportTyping = useCallback((active: boolean) => {
+    if (!active || !socket?.connected) { stopTyping(); return; }
+    socket.emit('typing:start');
+    typingActiveRef.current = true;
+    if (typingStopTimerRef.current !== null) window.clearTimeout(typingStopTimerRef.current);
+    typingStopTimerRef.current = window.setTimeout(stopTyping, 1800);
+  }, [socket, stopTyping]);
+  const updateLatestState = useCallback((element: HTMLElement) => {
+    const isAtBottom = isNearLatest(element);
+    atBottom.current = isAtBottom;
+    setIsAtLatest((current) => current === isAtBottom ? current : isAtBottom);
+  }, []);
+  const scrollToLatest = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    element.scrollTop = element.scrollHeight;
+    atBottom.current = true; setIsAtLatest(true);
+  }, []);
   const voice = useVoice(socket, apiUrl, token, user?.id ?? null, notify, voiceSounds, voiceInputDeviceId);
   const resolvedTheme = theme === 'system' ? systemPrefersLight ? 'light' : 'dark' : theme;
-  const themeClass = resolvedTheme === 'light' ? 'theme-light' : resolvedTheme === 'cosmic' ? 'theme-cosmic' : '';
+  const themeClass = resolvedTheme === 'light' ? 'theme-light' : '';
   const connectionLabel = connectionStatus === 'offline' ? 'Server unavailable'
     : connectionStatus === 'checking' ? 'Checking server…'
     : socketConnected ? 'Connected' : 'Server reachable';
@@ -275,7 +293,7 @@ function App() {
         const usesLocalWorkspace = !savedServer || savedServer === 'local';
         const base = usesLocalWorkspace ? info.localApiUrl : normalizeServerUrl(savedServer);
         sessionKey = usesLocalWorkspace ? 'local' : base;
-        setApiUrl(base); setConnectionUrl(usesLocalWorkspace ? '' : base);
+        setApiUrl(base);
         const savedToken = await window.orbit.getSession(sessionKey);
         if (!savedToken || disposed) { setBusy(false); return; }
         setBootMessage('Verifying your saved session');
@@ -299,6 +317,28 @@ function App() {
     })();
     return () => { disposed = true; };
   }, [loadBootstrap]);
+
+  useEffect(() => {
+    if (!runtime) return;
+    let disposed = false;
+    const checkForUpdate = async () => {
+      try {
+        const update = await window.orbit.updates.check();
+        if (disposed) return;
+        setAvailableUpdate(update);
+        if (update && notifiedUpdateVersionRef.current !== update.version) {
+          notifiedUpdateVersionRef.current = update.version;
+          localStorage.setItem('orbit.notifiedUpdateVersion', update.version);
+          notify(`Orbit Chat ${update.version} is available. Click the update icon to review and install it.`);
+        }
+      } catch {
+        // Update checks are optional; do not interrupt startup when GitHub is unavailable.
+      }
+    };
+    void checkForUpdate();
+    const timer = window.setInterval(() => void checkForUpdate(), 6 * 60 * 60 * 1000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [runtime?.version, notify]);
 
   useEffect(() => {
     let disposed = false;
@@ -383,8 +423,34 @@ function App() {
     if (!user?.id || !token || !apiUrl) return;
     const connection = io(apiUrl, { auth: { token }, reconnection: true, reconnectionDelay: 500, reconnectionDelayMax: 8000, timeout: 8000 });
     setSocket(connection);
+    const clearTypingState = () => {
+      for (const timer of remoteTypingTimersRef.current.values()) window.clearTimeout(timer);
+      remoteTypingTimersRef.current.clear();
+      setTypingUsers([]);
+      if (typingStopTimerRef.current !== null) window.clearTimeout(typingStopTimerRef.current);
+      typingStopTimerRef.current = null;
+      typingActiveRef.current = false;
+    };
     const onConnect = () => { setSocketConnected(true); if (selectedChannelRef.current) connection.emit('channel:join', selectedChannelRef.current); if (activeDmRef.current) connection.emit('dm:join', activeDmRef.current); };
-    const onDisconnect = () => setSocketConnected(false);
+    const onDisconnect = () => { setSocketConnected(false); clearTypingState(); };
+    const onTypingUpdate = (payload: { room?: unknown; userId?: unknown; displayName?: unknown; typing?: unknown }) => {
+      if (typeof payload.room !== 'string' || typeof payload.userId !== 'string' || typeof payload.displayName !== 'string' || typeof payload.typing !== 'boolean') return;
+      if (!payload.room.startsWith('channel:') && !payload.room.startsWith('dm:')) return;
+      const key = `${payload.room}\u001f${payload.userId}`;
+      const previousTimer = remoteTypingTimersRef.current.get(key);
+      if (previousTimer !== undefined) window.clearTimeout(previousTimer);
+      remoteTypingTimersRef.current.delete(key);
+      if (!payload.typing) {
+        setTypingUsers((current) => current.filter((item) => item.room !== payload.room || item.userId !== payload.userId));
+        return;
+      }
+      const typingUser = { room: payload.room, userId: payload.userId, displayName: payload.displayName };
+      setTypingUsers((current) => [...current.filter((item) => item.room !== typingUser.room || item.userId !== typingUser.userId), typingUser]);
+      remoteTypingTimersRef.current.set(key, window.setTimeout(() => {
+        remoteTypingTimersRef.current.delete(key);
+        setTypingUsers((current) => current.filter((item) => item.room !== typingUser.room || item.userId !== typingUser.userId));
+      }, 3200));
+    };
     const onNewMessage = (message: Message) => {
       if (message.channelId !== selectedChannelRef.current) return;
       setMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message]);
@@ -407,6 +473,8 @@ function App() {
     const onPresenceChanged = (updated: User) => {
       setMembers((current) => current.map((member) => member.id === updated.id ? { ...member, ...updated } : member));
       if (updated.id === user.id) setUser(updated);
+      setMessages((current) => current.map((message) => message.authorId === updated.id ? { ...message, avatarUrl: updated.avatarUrl } : message));
+      setDmMessages((current) => current.map((message) => message.authorId === updated.id ? { ...message, avatarUrl: updated.avatarUrl } : message));
     };
     const onChannelActivity = ({ channelId, authorId }: { channelId: string; authorId: string }) => { if (authorId !== user.id && channelId !== selectedChannelRef.current) setUnreadChannelIds((current) => new Set(current).add(channelId)); };
     const onChannelUpdated = (channel: Channel) => setServers((current) => current.map((server) => ({ ...server, channels: server.channels.map((item) => item.id === channel.id ? channel : item) })));
@@ -418,6 +486,7 @@ function App() {
     const onDmUpdated = (message: Message) => setDmMessages((current) => current.map((item) => item.id === message.id ? message : item));
     const onDmDeleted = ({ messageId }: { messageId: string }) => setDmMessages((current) => current.map((item) => item.id === messageId ? { ...item, content: 'This message was deleted.', deletedAt: new Date().toISOString() } : item));
     connection.on('connect', onConnect); connection.on('disconnect', onDisconnect);
+    connection.on('typing:update', onTypingUpdate);
     connection.on('message:new', onNewMessage); connection.on('message:updated', onUpdated); connection.on('message:deleted', onDeleted); connection.on('message:mention', onMention); connection.on('reaction:updated', onReaction);
     connection.on('presence:online', onPresenceOnline); connection.on('presence:offline', onPresenceOffline); connection.on('presence:snapshot', onPresenceSnapshot); connection.on('presence:changed', onPresenceChanged);
     connection.on('message:activity', onChannelActivity);
@@ -426,22 +495,37 @@ function App() {
     connection.on('dm:message', onDmMessage); connection.on('dm:updated', onDmUpdated); connection.on('dm:deleted', onDmDeleted);
     const loadFriends = async (base: string, session: string) => { try { const result = await apiRequest<{ friends: typeof friends }>(base, session, '/api/friends'); setFriends(result.friends); } catch { /* friendship panel reports request errors when opened */ } };
     void loadFriends(apiUrl, token);
-    return () => { connection.disconnect(); setSocket((current) => current === connection ? null : current); };
+    return () => { clearTypingState(); connection.disconnect(); setSocket((current) => current === connection ? null : current); };
   }, [user?.id, token, apiUrl, loadBootstrap, notify]);
 
   useEffect(() => {
     if (!socket || !selectedChannelId || !token || !apiUrl) return;
-    socket.emit('channel:join', selectedChannelId);
-    setLoadingMessages(true); atBottom.current = true;
-    void apiRequest<{ messages: Message[]; hasMore: boolean }>(apiUrl, token, `/api/channels/${selectedChannelId}/messages`)
-      .then((result) => { setMessages(result.messages); setHasMore(result.hasMore); lastMessageCount.current = result.messages.length; requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'auto' })); })
-      .catch((error) => notify(error instanceof Error ? error.message : 'Could not load channel messages.'))
-      .finally(() => setLoadingMessages(false));
-  }, [socket, selectedChannelId, token, apiUrl, notify]);
+    const channelId = selectedChannelId;
+    const scrollGeneration = ++initialScrollGenerationRef.current;
+    olderMessagesGenerationRef.current++;
+    loadingOlderMessagesRef.current = false;
+    prependScrollPosition.current = null;
+    socket.emit('channel:join', channelId);
+    setLoadingMessages(true); atBottom.current = true; setIsAtLatest(true);
+    void apiRequest<{ messages: Message[]; hasMore: boolean }>(apiUrl, token, `/api/channels/${channelId}/messages`)
+      .then((result) => {
+        if (initialScrollGenerationRef.current !== scrollGeneration || selectedChannelRef.current !== channelId) return;
+        setMessages(result.messages); setHasMore(result.hasMore); lastChannelMessageCount.current = result.messages.length;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (initialScrollGenerationRef.current === scrollGeneration && selectedChannelRef.current === channelId)
+            scrollToLatest();
+        }));
+      })
+      .catch((error) => { if (initialScrollGenerationRef.current === scrollGeneration) notify(error instanceof Error ? error.message : 'Could not load channel messages.'); })
+      .finally(() => { if (initialScrollGenerationRef.current === scrollGeneration) setLoadingMessages(false); });
+    return () => { initialScrollGenerationRef.current++; };
+  }, [socket, selectedChannelId, token, apiUrl, notify, scrollToLatest]);
 
   useEffect(() => {
     if (showMembers && activeServer && token && apiUrl) void apiRequest<{ members: Member[] }>(apiUrl, token, `/api/servers/${activeServer.id}/members`).then((result) => setMembers(result.members)).catch(() => undefined);
   }, [showMembers, activeServer?.id, token, apiUrl]);
+
+  useEffect(() => { setActiveMessageMenuId(null); }, [selectedChannelId, activeDmId]);
 
   useEffect(() => {
     const updateProfile = (event: Event) => setUser((event as CustomEvent<User>).detail);
@@ -450,17 +534,27 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (messages.length > lastMessageCount.current && atBottom.current) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    lastMessageCount.current = messages.length;
-  }, [messages]);
+    if (messages.length > lastChannelMessageCount.current && atBottom.current) scrollToLatest();
+    lastChannelMessageCount.current = messages.length;
+  }, [messages, scrollToLatest]);
 
   useEffect(() => {
+    const loadGeneration = ++dmLoadGenerationRef.current;
     if (!activeDmId || !token || !apiUrl) return;
-    socket?.emit('dm:join', activeDmId);
-    void apiRequest<{ messages: Message[] }>(apiUrl, token, `/api/dms/${activeDmId}/messages`).then((result) => { setDmMessages(result.messages); atBottom.current = true; requestAnimationFrame(() => bottomRef.current?.scrollIntoView({behavior:'auto'})); }).catch((error) => notify(error instanceof Error ? error.message : 'Could not load conversation.'));
-  }, [activeDmId, token, apiUrl, socket, notify]);
+    const conversationId = activeDmId;
+    socket?.emit('dm:join', conversationId);
+    atBottom.current = true; setIsAtLatest(true);
+    void apiRequest<{ messages: Message[] }>(apiUrl, token, `/api/dms/${conversationId}/messages`).then((result) => {
+      if (dmLoadGenerationRef.current !== loadGeneration || activeDmRef.current !== conversationId) return;
+      setDmMessages(result.messages); lastDmMessageCount.current = result.messages.length;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (activeDmRef.current === conversationId) scrollToLatest();
+      }));
+    }).catch((error) => { if (dmLoadGenerationRef.current === loadGeneration) notify(error instanceof Error ? error.message : 'Could not load conversation.'); });
+    return () => { if (dmLoadGenerationRef.current === loadGeneration) dmLoadGenerationRef.current++; };
+  }, [activeDmId, token, apiUrl, socket, notify, scrollToLatest]);
 
-  useEffect(() => { if (dmMessages.length > lastMessageCount.current && atBottom.current) bottomRef.current?.scrollIntoView({behavior:'smooth'}); lastMessageCount.current = dmMessages.length; }, [dmMessages]);
+  useEffect(() => { if (dmMessages.length > lastDmMessageCount.current && atBottom.current) scrollToLatest(); lastDmMessageCount.current = dmMessages.length; }, [dmMessages, scrollToLatest]);
 
   useEffect(() => {
     if (activePicker !== 'gif' || !apiUrl || !token) return;
@@ -497,66 +591,15 @@ function App() {
   useEffect(() => {
     document.documentElement.style.setProperty('--font-scale', `${fontScale / 100}`);
     localStorage.setItem('orbit.theme', theme); localStorage.setItem('orbit.fontScale', String(fontScale));
-    localStorage.setItem('orbit.easterEggs', JSON.stringify([...discoveredEasterEggsRef.current]));
     localStorage.setItem('orbit.notifications', desktopNotifications ? 'on' : 'off'); localStorage.setItem('orbit.reduceMotion', reducedMotion ? 'on' : 'off');
     localStorage.setItem('orbit.voiceSounds', voiceSounds ? 'on' : 'off');
     localStorage.setItem('orbit.sidebarCollapsed', sidebarCollapsed ? 'on' : 'off');
   }, [theme, fontScale, desktopNotifications, reducedMotion, voiceSounds, sidebarCollapsed]);
 
   useEffect(() => {
-    if (!user?.id) return;
-    const sequence = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
-    let position = 0;
-    let celebrationTimer = 0;
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      const target = event.target;
-      if (target instanceof HTMLElement && target.matches('input,textarea,select,[contenteditable="true"]')) return;
-      const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-      position = key === sequence[position] ? position + 1 : key === sequence[0] ? 1 : 0;
-      if (position === sequence.length) {
-        event.preventDefault();
-        position = 0;
-        setKonamiCelebration(true);
-        markEasterEgg('konami', 'You found the hidden Orbit code!');
-        window.clearTimeout(celebrationTimer);
-        celebrationTimer = window.setTimeout(() => setKonamiCelebration(false), 2100);
-      }
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => { document.removeEventListener('keydown', onKeyDown); window.clearTimeout(celebrationTimer); };
-  }, [user?.id, markEasterEgg]);
-
-  useEffect(() => {
-    if (!user?.id) return;
-    let idleTimer = 0;
-    const resetIdle = () => {
-      setIdleMascotVisible(false);
-      window.clearTimeout(idleTimer);
-      if (document.visibilityState === 'visible') idleTimer = window.setTimeout(() => setIdleMascotVisible(true), 60_000);
-    };
-    document.addEventListener('pointermove', resetIdle, { passive: true });
-    document.addEventListener('pointerdown', resetIdle, { passive: true });
-    document.addEventListener('keydown', resetIdle);
-    document.addEventListener('visibilitychange', resetIdle);
-    resetIdle();
-    return () => {
-      window.clearTimeout(idleTimer);
-      document.removeEventListener('pointermove', resetIdle);
-      document.removeEventListener('pointerdown', resetIdle);
-      document.removeEventListener('keydown', resetIdle);
-      document.removeEventListener('visibilitychange', resetIdle);
-    };
-  }, [user?.id]);
-
-  useEffect(() => {
-    const channelId = voice.voice?.channelId ?? null;
-    const joined = channelId && channelId !== previousVoiceChannelRef.current;
-    previousVoiceChannelRef.current = channelId;
-    if (joined && voiceSounds && Math.random() < 0.08) {
-      playCosmicVoiceChime(true);
-      markEasterEgg('voice-chime', 'A rare stardust chime!');
-    }
-  }, [voice.voice?.channelId, voiceSounds, markEasterEgg]);
+    localStorage.removeItem('orbit.easterEggs');
+    localStorage.removeItem('orbit.cosmicThemeUnlocked');
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('orbit.mutedChannels', JSON.stringify([...mutedChannelIds]));
@@ -630,23 +673,36 @@ function App() {
     if (dialog !== 'settings' || !navigator.mediaDevices?.enumerateDevices) return;
     let active = true;
     let refreshing = false;
-    const refresh = () => {
-      if (refreshing) return;
+    let refreshPending = false;
+    const refresh = async (requestPermission = false) => {
+      if (refreshing) { refreshPending = true; return; }
       refreshing = true;
-      void navigator.mediaDevices.enumerateDevices().then((devices) => {
+      try {
+        if (requestPermission && navigator.mediaDevices.getUserMedia) {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            stream.getTracks().forEach((track) => track.stop());
+          } catch { /* Show whatever devices the OS allows without microphone permission. */ }
+        }
+        const devices = await navigator.mediaDevices.enumerateDevices();
         if (!active) return;
-        const audio = devices.filter((device) => device.kind === 'audioinput' || device.kind === 'audiooutput');
+        const audio = uniqueSelectableAudioDevices(devices);
         setAudioDevices(audio);
         const inputIds = audio.filter((device) => device.kind === 'audioinput').map((device) => device.deviceId);
         const outputIds = audio.filter((device) => device.kind === 'audiooutput').map((device) => device.deviceId);
-        if (voiceInputDeviceId && !inputIds.includes(voiceInputDeviceId)) setVoiceInputDeviceId('');
-        if (voiceOutputDeviceId && !outputIds.includes(voiceOutputDeviceId)) setVoiceOutputDeviceId('');
-      }).catch(() => { if (active) setAudioDevices([]); }).finally(() => { refreshing = false; });
+        if (voiceInputDeviceIdRef.current && !inputIds.includes(voiceInputDeviceIdRef.current)) setVoiceInputDeviceId('');
+        if (voiceOutputDeviceIdRef.current && !outputIds.includes(voiceOutputDeviceIdRef.current)) setVoiceOutputDeviceId('');
+      } catch { if (active) setAudioDevices([]); }
+      finally {
+        refreshing = false;
+        if (active && refreshPending) { refreshPending = false; void refresh(false); }
+      }
     };
-    refresh();
-    navigator.mediaDevices.addEventListener('devicechange', refresh);
-    return () => { active = false; navigator.mediaDevices.removeEventListener('devicechange', refresh); };
-  }, [dialog, voiceInputDeviceId, voiceOutputDeviceId]);
+    void refresh(true);
+    const onDeviceChange = () => { void refresh(false); };
+    navigator.mediaDevices.addEventListener('devicechange', onDeviceChange);
+    return () => { active = false; navigator.mediaDevices.removeEventListener('devicechange', onDeviceChange); };
+  }, [dialog]);
 
   useEffect(() => {
     localStorage.setItem('orbit.voiceInputDevice', voiceInputDeviceId);
@@ -711,10 +767,11 @@ function App() {
   const submitAuth = async (event: FormEvent) => {
     event.preventDefault(); setAuthError(''); setAuthNotice(''); setAuthBusy(true);
     try {
-      const usesLocalWorkspace = !connectionUrl.trim();
-      const base = usesLocalWorkspace ? runtime?.localApiUrl ?? apiUrl : normalizeServerUrl(connectionUrl);
+      const savedServer = localStorage.getItem('orbit.serverUrl');
+      const usesLocalWorkspace = !savedServer || savedServer === 'local';
+      const base = usesLocalWorkspace ? runtime?.localApiUrl ?? apiUrl : normalizeServerUrl(savedServer);
       const sessionKey = usesLocalWorkspace ? 'local' : base;
-      setApiUrl(base); setConnectionUrl(usesLocalWorkspace ? '' : base); localStorage.setItem('orbit.serverUrl', usesLocalWorkspace ? 'local' : base);
+      setApiUrl(base); localStorage.setItem('orbit.serverUrl', usesLocalWorkspace ? 'local' : base);
       const endpoint = authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
       const result = await apiRequest<{ sessionToken: string; user: User }>(base, null, endpoint, { method: 'POST', body: JSON.stringify({ username, password, ...(authMode === 'register' ? { displayName: displayName || username } : {}) }) });
       await loadBootstrap(base, result.sessionToken);
@@ -731,15 +788,15 @@ function App() {
     voice.leave(); socket?.disconnect(); setSocket(null); setToken(null); setUser(null); setServers([]); setMessages([]); setAttachments([]); setSelectedChannelId(null); setSelectedServerId(null); setActiveDmId(null); setActiveDmUser(null); setActiveDmUserId(null); setDialog(null);
   };
 
-  const applyApiUrl = (value: string) => {
+  const launchUpdater = async () => {
+    if (!availableUpdate || updaterLaunching) return;
+    setUpdaterLaunching(true);
     try {
-      const serverUrl = value.trim() ? normalizeServerUrl(value) : '';
-      localStorage.setItem('orbit.serverUrl', serverUrl || 'local');
-      setConnectionUrl(serverUrl);
-      setDialog(null);
-      void signOut();
-      notify('API address saved. Sign in again to connect.');
-    } catch (error) { notify(error instanceof Error ? error.message : 'The API address is invalid.'); }
+      await window.orbit.updates.start();
+    } catch (error) {
+      setUpdaterLaunching(false);
+      notify(error instanceof Error ? error.message : 'The Orbit Chat updater could not be opened.');
+    }
   };
 
   const createServer = async (event: FormEvent) => {
@@ -880,27 +937,14 @@ function App() {
   };
 
   const changeServer = (server: Server) => {
-    if (server.name.trim().toLowerCase() === 'the observatory') markEasterEgg('observatory', 'The Observatory spotted you back.');
+    stopTyping();
     setView('channel'); setSelectedServerId(server.id); setActiveDmId(null); setActiveDmUser(null); setActiveDmUserId(null); setDmMessages([]); setDraft(''); setAttachments([]); setReplyTo(null); setEditing(null);
     const channel = server.channels.find((item) => item.type === 'text') ?? server.channels[0];
     setSelectedChannelId(channel?.id ?? null); setMessages([]);
   };
 
-  const tapOrbitLogo = () => {
-    const now = Date.now();
-    const clicks = [...logoSecretClicksRef.current.filter((time) => now - time < 2400), now];
-    logoSecretClicksRef.current = clicks;
-    if (clicks.length < 5) return;
-    logoSecretClicksRef.current = [];
-    if (!cosmicThemeUnlocked) {
-      setCosmicThemeUnlocked(true);
-      localStorage.setItem('orbit.cosmicThemeUnlocked', 'on');
-      markEasterEgg('cosmic-theme', 'Cosmic Dusk theme unlocked!');
-    }
-    setTheme('cosmic');
-  };
-
   const changeChannel = (channel: Channel) => {
+    stopTyping();
     setView('channel'); setActiveDmId(null); setSelectedChannelId(channel.id); setMessages([]); setDraft(''); setAttachments([]); setReplyTo(null); setEditing(null);
     if (channel.type === 'voice') void voice.join(channel.id);
   };
@@ -920,6 +964,7 @@ function App() {
   const upsertMessage = (message: Message) => setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]);
   const sendMessage = async () => {
     if (!activeChannel || (!draft.trim() && !attachments.length && !selectedGif && !editing) || busy) return;
+    stopTyping();
     if (!editing && !attachments.length && !selectedGif) {
       const response = unknownSlashCommandMessage(draft);
       if (response) { setDraft(''); setReplyTo(null); notify(response); return; }
@@ -949,7 +994,7 @@ function App() {
       pendingFiles: files.map((file) => ({ name: file.name, size: file.size }))
     };
     setMessages((current) => [...current, pendingMessage]);
-    atBottom.current = true;
+    atBottom.current = true; setIsAtLatest(true);
     setDraft(''); setAttachments([]); setReplyTo(null); setSelectedGif(null); setActivePicker(null); setMentionQuery(null); setMentionMatches([]);
     await deliverPendingMessage(id);
   };
@@ -1002,12 +1047,7 @@ function App() {
       if (pending.conversationId) setDmMessages((current) => [...current.filter((message) => message.id !== id && message.id !== result.message.id), result.message]);
       else if (selectedChannelRef.current === pending.channelId) upsertMessage(result.message);
       if (pending.payload.kind === 'gif' && pending.gif) void request('/api/integrations/tenor/share', { method: 'POST', body: JSON.stringify({ gifId: pending.gif.id, query: pending.gifQuery ?? '' }) }).catch(() => undefined);
-      if (/\bgood\s?night\b/i.test(pending.payload.content)) {
-        setGoodnightMoon(true);
-        window.setTimeout(() => setGoodnightMoon(false), 4400);
-        markEasterEgg('goodnight-moon', 'A moon drifted by. Sweet dreams!');
-      }
-      setUploadProgress(null); setUploadSpeed(''); setActivePicker(null); setMentionQuery(null); setMentionMatches([]); atBottom.current = true;
+       setUploadProgress(null); setUploadSpeed(''); setActivePicker(null); setMentionQuery(null); setMentionMatches([]); atBottom.current = true; setIsAtLatest(true);
     } catch (error) {
       if (pendingSendsRef.current.get(id) === pending) {
         updatePendingMessage(id, (message) => ({ ...message, deliveryState: 'failed', uploading: false, uploadProgress: undefined, uploadSpeed: undefined }));
@@ -1061,23 +1101,6 @@ function App() {
     catch (error) { notify(error instanceof Error ? error.message : 'Report could not be sent.'); }
   };
 
-  const handleComposerKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (mentionMatches.length && mentionQuery) {
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        event.preventDefault();
-        setActiveMentionIndex((current) => (current + (event.key === 'ArrowDown' ? 1 : -1) + mentionMatches.length) % mentionMatches.length);
-        return;
-      }
-      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
-        event.preventDefault(); chooseMention(mentionMatches[activeMentionIndex] ?? mentionMatches[0]); return;
-      }
-    }
-    if (event.key === 'Escape' && mentionMatches.length) { setMentionQuery(null); setMentionMatches([]); return; }
-    if (event.key === 'Escape') { if (activePicker) setActivePicker(null); else if (editing) { setEditing(null); setDraft(''); } else if (replyTo) setReplyTo(null); }
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); }
-    if (event.key === 'ArrowUp' && !draft && !editing) { const source = view === 'friends' && activeDmId ? dmMessages : messages; const last = [...source].reverse().find((message) => message.authorId === user?.id && !message.deletedAt); if (last) { event.preventDefault(); setEditing(last); setDraft(last.content); } }
-  };
-
   const applyFormatting = (open: string, close = open) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -1104,7 +1127,7 @@ function App() {
   const doLogout = () => void signOut();
 
   const connectToFriend = async (friend: typeof friends[number]) => {
-    try { const result = await request<{ conversationId: string }>('/api/dms', { method: 'POST', body: JSON.stringify({ userId: friend.id }) }); setActiveDmId(result.conversationId); setActiveDmUser(friend.displayName); setActiveDmUserId(friend.id); setView('friends'); setSelectedServerId(null); setSelectedChannelId(null); setMessages([]); setDraft(''); setAttachments([]); setReplyTo(null); setEditing(null); setActivePicker(null); }
+    try { const result = await request<{ conversationId: string }>('/api/dms', { method: 'POST', body: JSON.stringify({ userId: friend.id }) }); stopTyping(); setActiveDmId(result.conversationId); setActiveDmUser(friend.displayName); setActiveDmUserId(friend.id); setView('friends'); setSelectedServerId(null); setSelectedChannelId(null); setMessages([]); setDraft(''); setAttachments([]); setReplyTo(null); setEditing(null); setActivePicker(null); }
     catch (error) { notify(error instanceof Error ? error.message : 'Conversation could not be opened.'); }
   };
 
@@ -1123,6 +1146,7 @@ function App() {
 
   const sendDm = async () => {
     if (!activeDmId || (!draft.trim() && !attachments.length && !editing) || busy) return;
+    stopTyping();
     try {
       if (editing) {
         const result = await request<{ message: Message }>(`/api/messages/${editing.id}`, { method: 'PATCH', body: JSON.stringify({ content: draft.trim() }) });
@@ -1136,6 +1160,7 @@ function App() {
       const files = attachments.map((item) => item.file);
       const payload: ChannelMessagePayload = { content, kind: 'text', attachmentIds: [], mentions: [], ...(replyTo ? { replyToId: replyTo.id } : {}) };
       pendingSendsRef.current.set(id, { payload, files, conversationId: activeDmId });
+      atBottom.current = true; setIsAtLatest(true);
       setDmMessages((current) => [...current, {
         id, channelId: '', conversationId: activeDmId, authorId: user!.id, authorName: user!.displayName, avatarUrl: user!.avatarUrl,
         content, mentions: [], kind: 'text', stickerEmoji: null, mediaUrl: null, replyToId: replyTo?.id ?? null,
@@ -1148,8 +1173,33 @@ function App() {
     catch (error) { notify(error instanceof Error ? error.message : 'Message was not sent.'); }
   };
 
+  const handleComposerKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionMatches.length && mentionQuery) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        setActiveMentionIndex((current) => (current + (event.key === 'ArrowDown' ? 1 : -1) + mentionMatches.length) % mentionMatches.length);
+        return;
+      }
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        event.preventDefault(); chooseMention(mentionMatches[activeMentionIndex] ?? mentionMatches[0]); return;
+      }
+    }
+    if (event.key === 'Escape' && mentionMatches.length) { setMentionQuery(null); setMentionMatches([]); return; }
+    if (event.key === 'Escape') { if (activePicker) setActivePicker(null); else if (editing) { setEditing(null); setDraft(''); } else if (replyTo) setReplyTo(null); }
+    if (shouldSendComposerOnEnter(event.key, event.shiftKey, event.nativeEvent.isComposing)) {
+      event.preventDefault();
+      if (view === 'friends' && activeDmId) void sendDm();
+      else void sendMessage();
+    }
+    if (event.key === 'ArrowUp' && !draft && !editing) { const source = view === 'friends' && activeDmId ? dmMessages : messages; const last = [...source].reverse().find((message) => message.authorId === user?.id && !message.deletedAt); if (last) { event.preventDefault(); setEditing(last); setDraft(last.content); } }
+  };
+
   const currentMessages = view === 'friends' && activeDmId ? dmMessages : messages;
   const currentChannelTitle = view === 'friends' && activeDmId ? activeDmUser ?? 'Direct message' : activeChannel?.name ?? 'Welcome to Orbit Chat';
+  const currentTypingRoom = view === 'friends' && activeDmId ? `dm:${activeDmId}` : view === 'channel' && selectedChannelId ? `channel:${selectedChannelId}` : null;
+  const currentTypingNames = currentTypingRoom
+    ? typingUsers.filter((item) => item.room === currentTypingRoom && item.userId !== user?.id).map((item) => item.displayName)
+    : [];
   const sectionedChannels = useMemo(() => {
     if (!activeServer) return [];
     return activeServer.channels.map((channel) => channel);
@@ -1204,8 +1254,7 @@ function App() {
           <button className="button-primary auth-submit" type="submit" disabled={authBusy || !apiUrl}>{authBusy ? <LoaderCircle className="spin" size={17} /> : null}{authMode === 'login' ? 'Sign in' : 'Create account'}</button>
         </form>
         <p className="auth-switch">{authMode === 'login' ? 'New to Orbit Chat?' : 'Already have an account?'} <button onClick={() => { setAuthMode((current) => current === 'login' ? 'register' : 'login'); setAuthError(''); }}>{authMode === 'login' ? 'Create an account' : 'Sign in'}</button></p>
-        <details className="server-address"><summary><Wifi size={14} /> Server address <span>{apiUrl === runtime?.localApiUrl ? 'Local workspace' : 'Custom server'}</span></summary><div><label>API server URL<input value={connectionUrl} onChange={(event) => setConnectionUrl(event.target.value)} onBlur={() => setAuthError('')} placeholder="http://192.168.1.139:8787" spellCheck={false} /></label><small>HTTP works for LAN and Playit servers but is unencrypted. Use HTTPS for public servers.</small></div></details>
-        <div className="auth-status" role="status" aria-live="polite"><span className={`connection-led ${connectionDotClass}`} />{connectionStatus === 'online' ? 'Server is online' : connectionStatus === 'offline' ? 'No server response after 30 seconds' : 'Checking server connection…'}<button className="quiet-icon" title="Connection status" onClick={() => notify('Orbit Chat checks the server health endpoint. A yellow dot means it is checking; red means it has not responded for 30 seconds.')}><CircleHelp size={16} /></button></div>
+        <div className="auth-status" role="status" aria-live="polite"><span className={`connection-led ${connectionDotClass}`} />{availableUpdate && <button className="titlebar-update" title={`Update Orbit Chat to ${availableUpdate.version}`} aria-label={`Update Orbit Chat to ${availableUpdate.version}`} disabled={updaterLaunching} onClick={() => void launchUpdater()}>{updaterLaunching ? <LoaderCircle className="spin" size={13} /> : <Download size={13} />}</button>}{connectionStatus === 'online' ? 'Server is online' : connectionStatus === 'offline' ? 'No server response after 30 seconds' : 'Checking server connection…'}<button className="quiet-icon" title="Connection status" onClick={() => notify('Orbit Chat checks the server health endpoint. A yellow dot means it is checking; red means it has not responded for 30 seconds.')}><CircleHelp size={16} /></button></div>
       </div><p className="auth-legal">By continuing, you agree to use Orbit Chat responsibly. Passwords are stored as one-way hashes on the server.</p></section>
     </div>{toast && <Toast text={toast.text} />}</div>;
 
@@ -1213,9 +1262,9 @@ function App() {
 
   return <div className={`app-shell ${themeClass} ${reducedMotion ? 'reduce-motion' : ''} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} style={{ fontSize: `calc(14px * var(--font-scale, 1))` }} onDragEnter={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setDraggingFiles(true); } }} onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDraggingFiles(false); }} onDrop={uploadDragDrop}>
     <header className="titlebar">
-      <div className="titlebar-brand"><button className="titlebar-logo-secret" title="Orbit Chat" aria-label="Orbit Chat logo" onClick={tapOrbitLogo}><Logo small /></button><b>Orbit Chat</b><span className="titlebar-separator" /><span className="titlebar-context">{activeServer?.name ?? (view === 'friends' ? 'Friends' : 'Your space')}</span></div>
+      <div className="titlebar-brand"><span className="titlebar-logo"><Logo small /></span><b>Orbit Chat</b><span className="titlebar-separator" /><span className="titlebar-context">{activeServer?.name ?? (view === 'friends' ? 'Friends' : 'Your space')}</span></div>
       <div className="titlebar-drag-space" />
-      <div className="titlebar-status" role="status" aria-live="polite"><span className={`connection-led ${connectionDotClass}`} />{connectionLabel}<span className="version-tag">{runtime?.version}</span></div>
+      <div className="titlebar-status" role="status" aria-live="polite"><span className={`connection-led ${connectionDotClass}`} />{connectionLabel}{availableUpdate && <button className="titlebar-update" title={`Update Orbit Chat to ${availableUpdate.version}`} aria-label={`Update Orbit Chat to ${availableUpdate.version}`} disabled={updaterLaunching} onClick={() => void launchUpdater()}>{updaterLaunching ? <LoaderCircle className="spin" size={13} /> : <Download size={13} />}</button>}<span className="version-tag">{runtime?.version}</span></div>
       <WindowButtons />
     </header>
 
@@ -1223,7 +1272,7 @@ function App() {
       <nav className="server-rail" aria-label="Server navigation">
         <button className={`rail-home ${view === 'friends' ? 'selected' : ''}`} title="Friends and messages" onClick={() => { setView('friends'); setSelectedServerId(null); setSelectedChannelId(null); setActiveDmId(null); setMessages([]); setFriendTab('online'); void loadFriends(); }}><Logo small /><span className="rail-tooltip">Friends</span></button>
         <div className="rail-divider" />
-        {servers.map((server) => <button key={server.id} className={`server-icon-button ${selectedServerId === server.id && view === 'channel' ? 'selected' : ''}`} title={server.name} onClick={() => changeServer(server)} onContextMenu={(event) => { event.preventDefault(); changeServer(server); notify(`${server.name} · ${server.role}`); }}><span className="server-icon">{server.icon ? <img src={server.icon} alt="" /> : server.name.slice(0,2).toUpperCase()}</span>{server.name.trim().toLowerCase() === 'the observatory' && <span className="server-observatory-detail" aria-hidden="true"><Telescope size={11} /></span>}<span className="server-indicator" /><span className="rail-tooltip">{server.name}</span></button>)}
+        {servers.map((server) => <button key={server.id} className={`server-icon-button ${selectedServerId === server.id && view === 'channel' ? 'selected' : ''}`} title={server.name} onClick={() => changeServer(server)} onContextMenu={(event) => { event.preventDefault(); changeServer(server); notify(`${server.name} · ${server.role}`); }}><span className="server-icon">{server.icon ? <img src={server.icon} alt="" /> : server.name.slice(0,2).toUpperCase()}</span><span className="server-indicator" /><span className="rail-tooltip">{server.name}</span></button>)}
         <button className="rail-add" title="Create a server" onClick={() => { setDialog('server'); setServerName(''); }}><Plus size={20} /><span className="rail-tooltip">Create a server</span></button>
         <button className="rail-add rail-join" title="Join with an invite" onClick={() => { setDialog('join'); setInviteCode(''); }}><Compass size={19} /><span className="rail-tooltip">Join a server</span></button>
         <div className="rail-spacer" />
@@ -1237,8 +1286,7 @@ function App() {
           <div className="dm-friends-heading">DIRECT MESSAGES <button title="New message" onClick={() => setFriendTab('add')}><Plus size={16} /></button></div>
           <div className="dm-list">{friends.filter((item) => item.relation === 'friend').map((friend) => <button key={friend.id} className={`dm-row ${activeDmUserId === friend.id ? 'active' : ''}`} onClick={() => void connectToFriend(friend)}><Avatar label={friend.displayName} size="small" status={onlineUserIds.has(friend.id) ? 'online' : 'offline'} /><span>{friend.displayName}</span></button>)}</div>
           <div className="sidebar-spacer" />
-          <NetworkStatusCard status={connectionStatus} />
-          <UserPanel user={user} voice={voice.voice} earlyExplorer={discoveredEasterEggs.length >= 3} onProfile={() => setDialog('profile')} onSettings={() => setDialog('settings')} onLogout={doLogout} onMute={voice.toggleMute} onDeafen={voice.toggleDeafen} onVoiceLeave={voice.leave} notify={notify} />
+          <UserPanel user={user} voice={voice.voice} onProfile={() => setDialog('profile')} onSettings={() => setDialog('settings')} onLogout={doLogout} onMute={voice.toggleMute} onDeafen={voice.toggleDeafen} onVoiceLeave={voice.leave} notify={notify} />
         </> : <>
           <div className="sidebar-top"><button className="sidebar-menu-button" onClick={() => canManageServer ? setDialog('settings') : notify('Server settings require an administrator role.')}><span>{activeServer?.name ?? 'Your space'}</span><ChevronDown size={16} /></button><button className="server-top-menu" title="Server menu" onClick={() => activeServer ? createInvite() : setDialog('server')}><MoreHorizontal size={17} /></button></div>
           {activeServer ? <>
@@ -1263,13 +1311,11 @@ function App() {
             </div>
           </> : <div className="no-server-sidebar"><div className="no-server-orbit"><Logo /></div><b>Your space is waiting</b><p>Create a server or join a community with an invite code.</p><button className="button-primary" onClick={() => setDialog('server')}><Plus size={16} /> Create server</button><button className="button-subtle" onClick={() => setDialog('join')}><Compass size={16} /> Join a server</button></div>}
           {!activeServer && <div className="sidebar-spacer" />}
-          <NetworkStatusCard status={connectionStatus} />
-          <UserPanel user={user} voice={voice.voice} earlyExplorer={discoveredEasterEggs.length >= 3} onProfile={() => setDialog('profile')} onSettings={() => setDialog('settings')} onLogout={doLogout} onMute={voice.toggleMute} onDeafen={voice.toggleDeafen} onVoiceLeave={voice.leave} notify={notify} />
+          <UserPanel user={user} voice={voice.voice} onProfile={() => setDialog('profile')} onSettings={() => setDialog('settings')} onLogout={doLogout} onMute={voice.toggleMute} onDeafen={voice.toggleDeafen} onVoiceLeave={voice.leave} notify={notify} />
         </>}
       </aside>}
 
       <main className="main-pane">
-        {goodnightMoon && <div className="goodnight-moon" aria-hidden="true">🌙</div>}
         <div className="channel-header">
           <div className="channel-header-title"><span className="channel-header-icon">{view === 'friends' ? <Users size={19} /> : activeChannel?.type === 'voice' ? <Volume2 size={19} /> : <Hash size={19} />}</span><b>{currentChannelTitle}</b>{activeChannel?.topic && <span className="channel-topic">{activeChannel.topic}</span>}</div>
           <div className="channel-header-actions">
@@ -1297,27 +1343,51 @@ function App() {
             {friends.filter((friend) => friendTab === 'online' ? friend.relation === 'friend' && onlineUserIds.has(friend.id) : friendTab === 'pending' ? friend.relation !== 'friend' : friend.relation === 'friend').length === 0 && <div className="friends-empty"><Users size={28} /><b>{friendTab === 'online' ? 'It’s quiet out there' : friendTab === 'pending' ? 'No pending requests' : 'Your list is just getting started'}</b><p>{friendTab === 'online' ? 'Friends will appear here when they come online.' : 'Find people by their Orbit Chat username.'}</p>{friendTab !== 'online' && <button className="button-primary" onClick={() => setFriendTab('add')}>Add a friend</button>}</div>}
           </div>}
         </section> : view === 'friends' && activeDmId ? <>
-          <div className="message-list dm-message-list" ref={scrollRef}>{dmMessages.map((message, index) => <MessageRow key={message.id} message={message} previous={dmMessages[index - 1]} replyTarget={dmMessages.find((item) => item.id === message.replyToId)} user={user} baseUrl={apiUrl} token={token} canModerate={false} onReply={(item) => { setReplyTo(item); setEditing(null); textareaRef.current?.focus(); }} onEdit={(item) => { setEditing(item); setReplyTo(null); setDraft(item.content); textareaRef.current?.focus(); }} onDelete={(item) => void removeMessage(item)} onReport={(item) => void reportMessage(item)} onReact={(item, emoji) => void toggleReaction(item, emoji)} onOpenImage={(url,name) => setMediaViewer({url,name,zoom:1})} onJumpToMessage={(id) => document.getElementById(`message-${id}`)?.scrollIntoView({behavior:'smooth',block:'center'})} onToast={notify} onRetry={retryPendingMessage} onCancel={cancelPendingMessage} />)}<div ref={bottomRef} /></div>
-          <Composer value={draft} setValue={setDraft} onMentionInput={() => undefined} mentionMatches={[]} activeMentionIndex={0} onMentionSelect={() => undefined} onSend={() => void sendDm()} onKeyDown={handleComposerKey} inputRef={textareaRef} placeholder={editing ? 'Edit your message' : `Message ${currentChannelTitle}`} attachments={attachments} uploadProgress={uploadProgress} uploadSpeed={uploadSpeed} selectedGif={null} replyTo={replyTo} editing={editing} activePicker={activePicker} setActivePicker={setActivePicker} pickerRef={pickerRef} onFiles={addFiles} onEmoji={selectEmoji} gifs={gifs} gifNext={gifNext} onLoadMoreGifs={() => void loadMoreGifs()} gifLoading={gifLoading} gifError={gifError} gifSearch={gifSearch} setGifSearch={setGifSearch} onSelectGif={() => undefined} stickers={stickers} onSticker={() => undefined} fileInputRef={fileInputRef} onRemoveAttachment={(id) => setAttachments((current) => current.filter((item) => item.id !== id))} onRemoveGif={() => setSelectedGif(null)} onCancelReply={() => setReplyTo(null)} onCancelEdit={() => { setEditing(null); setDraft(''); }} busy={busy} onFormat={applyFormatting} disabled={!activeDmId} mediaEnabled={false} emojiEnabled filesEnabled={false} gifEnabled={false} stickersEnabled={false} />
+          <div className="message-list dm-message-list" ref={scrollRef} onLoadCapture={() => { if (atBottom.current) scrollToLatest(); }}>{dmMessages.map((message, index) => <MessageRow key={message.id} message={message} previous={dmMessages[index - 1]} replyTarget={dmMessages.find((item) => item.id === message.replyToId)} user={user} baseUrl={apiUrl} token={token} canModerate={false} onReply={(item) => { setReplyTo(item); setEditing(null); textareaRef.current?.focus(); }} onEdit={(item) => { setEditing(item); setReplyTo(null); setDraft(item.content); textareaRef.current?.focus(); }} onDelete={(item) => void removeMessage(item)} onReport={(item) => void reportMessage(item)} onReact={(item, emoji) => void toggleReaction(item, emoji)} onOpenImage={(url,name) => setMediaViewer({url,name,zoom:1})} onJumpToMessage={(id) => document.getElementById(`message-${id}`)?.scrollIntoView({behavior:'smooth',block:'center'})} onToast={notify} onRetry={retryPendingMessage} onCancel={cancelPendingMessage} themeLight={themeClass === 'theme-light'} contextMenuOpen={activeMessageMenuId === message.id} onOpenContextMenu={() => setActiveMessageMenuId(message.id)} onCloseContextMenu={() => setActiveMessageMenuId(null)} />)}</div>
+          {currentTypingNames.length > 0 && <TypingIndicator names={currentTypingNames} />}<Composer value={draft} setValue={setDraft} onTypingChange={reportTyping} onMentionInput={() => undefined} mentionMatches={[]} activeMentionIndex={0} onMentionSelect={() => undefined} onSend={() => void sendDm()} onKeyDown={handleComposerKey} inputRef={textareaRef} placeholder={editing ? 'Edit your message' : `Message ${currentChannelTitle}`} attachments={attachments} uploadProgress={uploadProgress} uploadSpeed={uploadSpeed} selectedGif={null} replyTo={replyTo} editing={editing} activePicker={activePicker} setActivePicker={setActivePicker} pickerRef={pickerRef} onFiles={addFiles} onEmoji={selectEmoji} gifs={gifs} gifNext={gifNext} onLoadMoreGifs={() => void loadMoreGifs()} gifLoading={gifLoading} gifError={gifError} gifSearch={gifSearch} setGifSearch={setGifSearch} onSelectGif={() => undefined} stickers={stickers} onSticker={() => undefined} fileInputRef={fileInputRef} onRemoveAttachment={(id) => setAttachments((current) => current.filter((item) => item.id !== id))} onRemoveGif={() => setSelectedGif(null)} onCancelReply={() => setReplyTo(null)} onCancelEdit={() => { setEditing(null); setDraft(''); }} busy={busy} onFormat={applyFormatting} disabled={!activeDmId} mediaEnabled={false} emojiEnabled filesEnabled={false} gifEnabled={false} stickersEnabled={false} />
         </> : <>
           {!activeChannel ? <div className="welcome-empty"><div className="welcome-art"><Logo /></div><p className="eyebrow">A good place to start</p><h1>Welcome to Orbit Chat</h1><p>Create a server for your community, or join one with an invite from a friend. Your conversations will appear here.</p><div className="welcome-actions"><button className="button-primary" onClick={() => { setDialog('server'); setServerName(''); }}><Plus size={17} /> Create a server</button><button className="button-subtle" onClick={() => { setDialog('join'); setInviteCode(''); }}><Compass size={17} /> Join with an invite</button></div></div> : activeChannel.type === 'voice' ? null : <>
             <div className="chat-scroll-area" onDragOver={(event) => event.preventDefault()}>
-              <div className="message-list" ref={scrollRef} onScroll={(event) => {
-                const element = event.currentTarget; atBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 140;
-                if (element.scrollTop < 80 && hasMore && !loadingMessages && displayedMessages.length) {
-                  prependScrollHeight.current = element.scrollHeight; setLoadingMessages(true);
-                  const before = displayedMessages[0].createdAt;
-                  void apiRequest<{ messages: Message[]; hasMore: boolean }>(apiUrl, token, `/api/channels/${selectedChannelId}/messages?before=${encodeURIComponent(before)}`)
-                    .then((result) => { setMessages((current) => [...result.messages.filter((item) => !current.some((existing) => existing.id === item.id)), ...current]); setHasMore(result.hasMore); requestAnimationFrame(() => { if (scrollRef.current && prependScrollHeight.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight - prependScrollHeight.current; }); })
-                    .catch((error) => notify(error instanceof Error ? error.message : 'Older messages could not be loaded.')).finally(() => setLoadingMessages(false));
+              <div className="message-list" ref={scrollRef} onLoadCapture={() => { if (atBottom.current) scrollToLatest(); }} onScroll={(event) => {
+                const element = event.currentTarget;
+                updateLatestState(element);
+                if (element.scrollTop < 80 && hasMore && !loadingMessages && !loadingOlderMessagesRef.current && displayedMessages.length && selectedChannelId) {
+                  loadingOlderMessagesRef.current = true;
+                  const requestGeneration = ++olderMessagesGenerationRef.current;
+                  const channelId = selectedChannelId;
+                  const firstMessage = displayedMessages[0];
+                  prependScrollPosition.current = { channelId, scrollHeight: element.scrollHeight, scrollTop: element.scrollTop };
+                  setLoadingMessages(true);
+                  void apiRequest<{ messages: Message[]; hasMore: boolean }>(apiUrl, token, `/api/channels/${channelId}/messages?before=${encodeURIComponent(firstMessage.createdAt)}`)
+                    .then((result) => {
+                      if (olderMessagesGenerationRef.current !== requestGeneration || selectedChannelRef.current !== channelId) return;
+                      setMessages((current) => [...result.messages.filter((item) => !current.some((existing) => existing.id === item.id)), ...current]);
+                      setHasMore(result.hasMore);
+                      requestAnimationFrame(() => requestAnimationFrame(() => {
+                        const position = prependScrollPosition.current;
+                        const list = scrollRef.current;
+                        if (list && position?.channelId === channelId && selectedChannelRef.current === channelId) {
+                          list.scrollTop = position.scrollTop + list.scrollHeight - position.scrollHeight;
+                          updateLatestState(list);
+                        }
+                        if (position?.channelId === channelId) prependScrollPosition.current = null;
+                      }));
+                    })
+                    .catch((error) => notify(error instanceof Error ? error.message : 'Older messages could not be loaded.'))
+                    .finally(() => {
+                      if (olderMessagesGenerationRef.current === requestGeneration) {
+                        loadingOlderMessagesRef.current = false;
+                        setLoadingMessages(false);
+                      }
+                    });
                 }
               }}>
                 {loadingMessages && <div className="timeline-loading"><LoaderCircle className="spin" size={17} /> Loading messages…</div>}
                 {displayedMessages.length === 0 && !loadingMessages && <div className="channel-welcome"><span className="channel-welcome-icon"><Hash size={26} /></span><h2>Welcome to #{activeChannel.name}</h2><p>{activeChannel.topic || 'This is the beginning of this channel.'}{activeServer?.ownerId === user.id ? ' Start the conversation when you’re ready.' : ''}</p></div>}
-                {displayedMessages.map((message, index) => <MessageRow key={message.id} message={message} previous={displayedMessages[index - 1]} user={user} baseUrl={apiUrl} token={token} canModerate={canManageServer ?? false} replyTarget={messages.find((item) => item.id === message.replyToId)} onReply={(item) => { setReplyTo(item); setEditing(null); textareaRef.current?.focus(); }} onEdit={(item) => { setEditing(item); setReplyTo(null); setDraft(item.content); textareaRef.current?.focus(); }} onDelete={(item) => void removeMessage(item)} onReport={(item) => void reportMessage(item)} onReact={(item, emoji) => void toggleReaction(item, emoji)} onOpenImage={(url,name) => setMediaViewer({url,name,zoom:1})} onJumpToMessage={(id) => { const element = document.getElementById(`message-${id}`); element?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }} onToast={notify} onRetry={retryPendingMessage} onCancel={cancelPendingMessage} />)}
-                <div ref={bottomRef} />
+                {displayedMessages.map((message, index) => <MessageRow key={message.id} message={message} previous={displayedMessages[index - 1]} user={user} baseUrl={apiUrl} token={token} canModerate={canManageServer ?? false} replyTarget={messages.find((item) => item.id === message.replyToId)} onReply={(item) => { setReplyTo(item); setEditing(null); textareaRef.current?.focus(); }} onEdit={(item) => { setEditing(item); setReplyTo(null); setDraft(item.content); textareaRef.current?.focus(); }} onDelete={(item) => void removeMessage(item)} onReport={(item) => void reportMessage(item)} onReact={(item, emoji) => void toggleReaction(item, emoji)} onOpenImage={(url,name) => setMediaViewer({url,name,zoom:1})} onJumpToMessage={(id) => { const element = document.getElementById(`message-${id}`); element?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }} onToast={notify} onRetry={retryPendingMessage} onCancel={cancelPendingMessage} themeLight={themeClass === 'theme-light'} contextMenuOpen={activeMessageMenuId === message.id} onOpenContextMenu={() => setActiveMessageMenuId(message.id)} onCloseContextMenu={() => setActiveMessageMenuId(null)} />)}
+
               </div>
-              {!atBottom.current && messages.length > 12 && <button className="jump-latest" onClick={() => { atBottom.current = true; bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }}><ArrowDown size={15} /> Jump to latest</button>}
+              {!isAtLatest && messages.length > 12 && <button className="jump-latest" onClick={() => scrollToLatest()}><ArrowDown size={15} /> Jump to latest</button>}
             </div>
             {voice.voice && <div className="voice-status-strip" role="status" aria-label="Voice connection controls">
               <span className="voice-strip-mark"><Headphones size={16} /><span className="connection-led connected" /></span>
@@ -1330,7 +1400,7 @@ function App() {
                 <button className="voice-leave" onClick={voice.leave} title="Disconnect voice" aria-label="Disconnect voice"><X size={16} /></button>
               </div>
             </div>}
-            <Composer value={draft} setValue={setDraft} onMentionInput={updateMentionSuggestions} mentionMatches={mentionMatches} activeMentionIndex={activeMentionIndex} onMentionSelect={chooseMention} onSend={() => void sendMessage()} onKeyDown={handleComposerKey} inputRef={textareaRef} placeholder={editing ? 'Edit your message' : `Message #${activeChannel.name}`} attachments={attachments} uploadProgress={uploadProgress} uploadSpeed={uploadSpeed} selectedGif={selectedGif} replyTo={replyTo} editing={editing} activePicker={activePicker} setActivePicker={setActivePicker} pickerRef={pickerRef} onFiles={addFiles} onEmoji={selectEmoji} gifs={gifs} gifNext={gifNext} onLoadMoreGifs={() => void loadMoreGifs()} gifLoading={gifLoading} gifError={gifError} gifSearch={gifSearch} setGifSearch={setGifSearch} onSelectGif={(gif) => { setSelectedGif(gif); setActivePicker(null); textareaRef.current?.focus(); }} stickers={stickers} onSticker={(sticker) => void sendSticker(sticker)} fileInputRef={fileInputRef} onRemoveAttachment={(id) => setAttachments((current) => current.filter((item) => item.id !== id))} onRemoveGif={() => setSelectedGif(null)} onCancelReply={() => setReplyTo(null)} onCancelEdit={() => { setEditing(null); setDraft(''); }} busy={busy} onFormat={applyFormatting} disabled={activeChannel.type !== 'text' && activeChannel.type !== 'announcement'} mediaEnabled={!editing} />
+            {currentTypingNames.length > 0 && <TypingIndicator names={currentTypingNames} />}<Composer value={draft} setValue={setDraft} onTypingChange={reportTyping} onMentionInput={updateMentionSuggestions} mentionMatches={mentionMatches} activeMentionIndex={activeMentionIndex} onMentionSelect={chooseMention} onSend={() => void sendMessage()} onKeyDown={handleComposerKey} inputRef={textareaRef} placeholder={editing ? 'Edit your message' : `Message #${activeChannel.name}`} attachments={attachments} uploadProgress={uploadProgress} uploadSpeed={uploadSpeed} selectedGif={selectedGif} replyTo={replyTo} editing={editing} activePicker={activePicker} setActivePicker={setActivePicker} pickerRef={pickerRef} onFiles={addFiles} onEmoji={selectEmoji} gifs={gifs} gifNext={gifNext} onLoadMoreGifs={() => void loadMoreGifs()} gifLoading={gifLoading} gifError={gifError} gifSearch={gifSearch} setGifSearch={setGifSearch} onSelectGif={(gif) => { setSelectedGif(gif); setActivePicker(null); textareaRef.current?.focus(); }} stickers={stickers} onSticker={(sticker) => void sendSticker(sticker)} fileInputRef={fileInputRef} onRemoveAttachment={(id) => setAttachments((current) => current.filter((item) => item.id !== id))} onRemoveGif={() => setSelectedGif(null)} onCancelReply={() => setReplyTo(null)} onCancelEdit={() => { setEditing(null); setDraft(''); }} busy={busy} onFormat={applyFormatting} disabled={activeChannel.type !== 'text' && activeChannel.type !== 'announcement'} mediaEnabled={!editing} />
           </>}
         </>}
       </main>
@@ -1338,10 +1408,8 @@ function App() {
       {showMembers && activeServer && view === 'channel' && <aside className="member-sidebar"><div className="member-heading">MEMBERS <span>{members.length}</span><button title="Refresh members" onClick={() => void loadMembers()}><Activity size={15} /></button></div><div className="member-list">{members.map((member) => <div key={member.id} className="member-row"><Avatar label={member.displayName} url={member.avatarUrl} size="small" status={onlineUserIds.has(member.id) ? member.status : 'offline'} /><span>{member.displayName}{member.id === activeServer.ownerId && <small>OWNER</small>}</span></div>)}</div></aside>}
     </div>
 
-    {idleMascotVisible && <button className="idle-mascot" title="A tiny space visitor. Click to say hello." onClick={() => { setIdleMascotVisible(false); markEasterEgg('idle-mascot', 'The space visitor says hello!'); }}>🪐<span>Still orbiting?</span></button>}
-    {konamiCelebration && <div className="konami-celebration" aria-hidden="true"><div><Logo /><span>Orbit aligned</span></div></div>}
     {draggingFiles && <div className="drop-overlay"><div><FileImage size={34} /><b>{view === 'channel' && activeChannel?.type === 'voice' || view === 'friends' && !activeDmId ? 'Choose a text channel or conversation first' : 'Drop to add files to your message'}</b><span>Archives, documents, media and more · up to 20 GB per upload</span></div></div>}
-    {dialog && <Dialog mode={dialog} setMode={setDialog} serverName={serverName} setServerName={setServerName} onCreateServer={createServer} inviteCode={inviteCode} setInviteCode={setInviteCode} onJoinServer={joinServer} channelName={channelName} setChannelName={setChannelName} channelType={channelType} setChannelType={setChannelType} topic={topic} setTopic={setTopic} channelCategoryId={channelCategoryId} setChannelCategoryId={setChannelCategoryId} categories={activeServer?.categories ?? []} onCreateChannel={createChannel} categoryName={categoryName} setCategoryName={setCategoryName} onCreateCategory={createCategory} inviteLink={inviteLink} activeServer={activeServer} user={user} token={token} notify={notify} theme={theme} setTheme={setTheme} cosmicThemeUnlocked={cosmicThemeUnlocked} earlyExplorer={discoveredEasterEggs.length >= 3} fontScale={fontScale} setFontScale={setFontScale} desktopNotifications={desktopNotifications} setDesktopNotifications={setDesktopNotifications} reducedMotion={reducedMotion} setReducedMotion={setReducedMotion} voiceSounds={voiceSounds} setVoiceSounds={setVoiceSounds} sidebarCollapsed={sidebarCollapsed} setSidebarCollapsed={setSidebarCollapsed} onLogout={doLogout} runtime={runtime} apiUrl={apiUrl} connectionUrl={connectionUrl} setConnectionUrl={setConnectionUrl} onApplyApiUrl={applyApiUrl} audioDevices={audioDevices} voiceInputDeviceId={voiceInputDeviceId} setVoiceInputDeviceId={setVoiceInputDeviceId} voiceOutputDeviceId={voiceOutputDeviceId} setVoiceOutputDeviceId={setVoiceOutputDeviceId} onSelectInputDevice={voice.selectInputDevice} onSelectOutputDevice={voice.selectOutputDevice} busy={busy} onProfileChange={(updated) => window.dispatchEvent(new CustomEvent('orbit:profile', { detail: updated }))} />}
+    {dialog && <Dialog mode={dialog} setMode={setDialog} serverName={serverName} setServerName={setServerName} onCreateServer={createServer} inviteCode={inviteCode} setInviteCode={setInviteCode} onJoinServer={joinServer} channelName={channelName} setChannelName={setChannelName} channelType={channelType} setChannelType={setChannelType} topic={topic} setTopic={setTopic} channelCategoryId={channelCategoryId} setChannelCategoryId={setChannelCategoryId} categories={activeServer?.categories ?? []} onCreateChannel={createChannel} categoryName={categoryName} setCategoryName={setCategoryName} onCreateCategory={createCategory} inviteLink={inviteLink} activeServer={activeServer} user={user} token={token} notify={notify} theme={theme} setTheme={setTheme} fontScale={fontScale} setFontScale={setFontScale} desktopNotifications={desktopNotifications} setDesktopNotifications={setDesktopNotifications} reducedMotion={reducedMotion} setReducedMotion={setReducedMotion} voiceSounds={voiceSounds} setVoiceSounds={setVoiceSounds} sidebarCollapsed={sidebarCollapsed} setSidebarCollapsed={setSidebarCollapsed} onLogout={doLogout} runtime={runtime} apiUrl={apiUrl} audioDevices={audioDevices} voiceInputDeviceId={voiceInputDeviceId} setVoiceInputDeviceId={setVoiceInputDeviceId} voiceOutputDeviceId={voiceOutputDeviceId} setVoiceOutputDeviceId={setVoiceOutputDeviceId} onSelectInputDevice={voice.selectInputDevice} onSelectOutputDevice={voice.selectOutputDevice} busy={busy} onProfileChange={(updated) => window.dispatchEvent(new CustomEvent('orbit:profile', { detail: updated }))} />}
     {channelAreaMenu && <div className="channel-area-menu" role="menu" aria-label="Create in this server" style={{ left: channelAreaMenu.left, top: channelAreaMenu.top }} onPointerDown={(event) => event.stopPropagation()}>
       <div className="channel-area-menu-title"><span>QUICK CREATE</span><small>{channelAreaMenu.categoryId ? orderedCategories.find((category) => category.id === channelAreaMenu.categoryId)?.name : activeServer?.name}</small></div>
       <button role="menuitem" onClick={() => openCreateChannel('text', channelAreaMenu.categoryId ?? '')}><Hash size={16} /><span>Text channel</span></button>
@@ -1379,20 +1447,10 @@ function WindowButtons() {
 
 function ShieldIcon() { return <span className="shield-glyph">✦</span>; }
 
-function NetworkStatusCard({ status }: { status: ConnectionStatus }) {
-  const label = status === 'online' ? 'Server online' : status === 'offline' ? 'Server unavailable' : 'Checking server…';
-  const detail = status === 'offline' ? 'No response for 30 seconds. Retrying automatically.'
-    : status === 'checking' ? 'Waiting for a response from Orbit Chat.' : 'The server health check succeeded.';
-  return <section className="network-status-card" aria-label="Server connection status" role="status" aria-live="polite">
-    <div className="network-status-heading"><span className={`connection-led ${status === 'online' ? 'connected' : status}`} /><b>{label}</b></div>
-    <div className="connection-status-detail">{detail}</div>
-  </section>;
-}
-
-function UserPanel({ user, voice, earlyExplorer, onProfile, onSettings, onLogout, onMute, onDeafen, onVoiceLeave, notify }: { user: User; voice: ReturnType<typeof useVoice>['voice']; earlyExplorer: boolean; onProfile(): void; onSettings(): void; onLogout(): void; onMute(): void; onDeafen(): void; onVoiceLeave(): void; notify(text: string): void }) {
+function UserPanel({ user, voice, onProfile, onSettings, onLogout, onMute, onDeafen, onVoiceLeave, notify }: { user: User; voice: ReturnType<typeof useVoice>['voice']; onProfile(): void; onSettings(): void; onLogout(): void; onMute(): void; onDeafen(): void; onVoiceLeave(): void; notify(text: string): void }) {
   return <div className="user-panel">
     {voice && <div className="user-voice-status"><span className="connection-led connected" /><div><b>Voice connected</b><small>Click headphones to disconnect</small></div><button title="Disconnect voice" onClick={onVoiceLeave}><X size={15} /></button></div>}
-    <button className="user-identity" onClick={onProfile}><span className="user-avatar-ring"><Avatar label={user.displayName} url={user.avatarUrl} status={user.status} /><i><Image size={9} /></i></span><span><b>{user.displayName}{earlyExplorer && <span className="explorer-badge" title="Early Explorer"><Sparkles size={10} /></span>}</b><small>@{user.username}</small></span></button>
+    <button className="user-identity" onClick={onProfile}><span className="user-avatar-ring"><Avatar label={user.displayName} url={user.avatarUrl} status={user.status} /><i><Image size={9} /></i></span><span><b>{user.displayName}</b><small>@{user.username}</small></span></button>
     <div className="user-actions">
       <button title={voice ? voice.muted ? 'Unmute microphone' : 'Mute microphone' : 'Join a voice channel to use your microphone'} className={voice?.muted ? 'action-on' : ''} onClick={() => voice ? onMute() : notify('Join a voice channel first to use your microphone.')} aria-pressed={voice?.muted ?? false}>{voice?.muted ? <MicOff size={16} /> : <Mic size={16} />}</button>
       <button title={voice ? voice.deafened ? 'Enable audio' : 'Deafen' : 'Join a voice channel to manage audio'} className={voice?.deafened ? 'action-on' : ''} onClick={() => voice ? onDeafen() : notify('Join a voice channel first to manage voice audio.')} aria-pressed={voice?.deafened ?? false}>{voice?.deafened ? <VolumeX size={16} /> : <Headphones size={16} />}</button>
@@ -1433,9 +1491,18 @@ function RemoteAudio({ stream, muted, label, outputDeviceId }: { stream: MediaSt
 
 function Toast({ text }: { text: string }) { return <div className="toast-message" role="status"><Info size={16} />{text}</div>; }
 
+function TypingIndicator({ names }: { names: string[] }) {
+  if (!names.length) return null;
+  const text = names.length === 1 ? `${names[0]} is typing…`
+    : names.length === 2 ? `${names[0]} and ${names[1]} are typing…`
+    : `${names[0]}, ${names[1]}, and others are typing…`;
+  return <div className="typing-indicator" role="status" aria-live="polite"><span className="typing-indicator-dots" aria-hidden="true"><i /><i /><i /></span>{text}</div>;
+}
+
 function Composer(props: {
   value: string; setValue(value: string): void; onMentionInput(value: string, caret: number): void; mentionMatches: Member[]; activeMentionIndex: number; onMentionSelect(member: Member): void;
   onSend(): void; onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void;
+  onTypingChange(active: boolean): void;
   inputRef: React.RefObject<HTMLTextAreaElement | null>; placeholder: string; attachments: QueuedFile[]; selectedGif: GifItem | null;
   replyTo: Message | null; editing: Message | null; activePicker: PickerMode; setActivePicker(value: PickerMode): void;
   pickerRef: React.RefObject<HTMLDivElement | null>; onFiles(files: FileList | File[]): Promise<void>; onEmoji(emoji: string): void;
@@ -1445,12 +1512,12 @@ function Composer(props: {
   busy: boolean; uploadProgress?: number | null; uploadSpeed?: string; onFormat(open: string, close?: string): void; disabled: boolean; mediaEnabled?: boolean;
   filesEnabled?: boolean; emojiEnabled?: boolean; gifEnabled?: boolean; stickersEnabled?: boolean;
 }) {
-  const { value, setValue, onMentionInput, mentionMatches, activeMentionIndex, onMentionSelect, onSend, onKeyDown, inputRef, placeholder, attachments, uploadProgress, uploadSpeed, selectedGif, replyTo, editing, activePicker, setActivePicker, pickerRef, onFiles, onEmoji, gifs, gifNext, onLoadMoreGifs, gifLoading, gifError, gifSearch, setGifSearch, onSelectGif, stickers, onSticker, fileInputRef, onRemoveAttachment, onRemoveGif, onCancelReply, onCancelEdit, busy, onFormat, disabled, mediaEnabled = true } = props;
+  const { value, setValue, onMentionInput, mentionMatches, activeMentionIndex, onMentionSelect, onSend, onKeyDown, onTypingChange, inputRef, placeholder, attachments, uploadProgress, uploadSpeed, selectedGif, replyTo, editing, activePicker, setActivePicker, pickerRef, onFiles, onEmoji, gifs, gifNext, onLoadMoreGifs, gifLoading, gifError, gifSearch, setGifSearch, onSelectGif, stickers, onSticker, fileInputRef, onRemoveAttachment, onRemoveGif, onCancelReply, onCancelEdit, busy, onFormat, disabled, mediaEnabled = true } = props;
   const filesEnabled = props.filesEnabled ?? mediaEnabled;
   const emojiEnabled = props.emojiEnabled ?? mediaEnabled;
   const gifEnabled = props.gifEnabled ?? mediaEnabled;
   const stickersEnabled = props.stickersEnabled ?? mediaEnabled;
-  const autoResize = (event: React.ChangeEvent<HTMLTextAreaElement>) => { setValue(event.target.value); onMentionInput(event.target.value, event.currentTarget.selectionStart); event.currentTarget.style.height = 'auto'; event.currentTarget.style.height = `${Math.min(168, event.currentTarget.scrollHeight)}px`; };
+  const autoResize = (event: React.ChangeEvent<HTMLTextAreaElement>) => { setValue(event.target.value); onTypingChange(Boolean(event.target.value.trim())); onMentionInput(event.target.value, event.currentTarget.selectionStart); event.currentTarget.style.height = 'auto'; event.currentTarget.style.height = `${Math.min(168, event.currentTarget.scrollHeight)}px`; };
   return <div className="composer-area" ref={pickerRef}>
     {replyTo && <div className="reply-composer-banner"><Reply size={14} /><span>Replying to <b>{replyTo.authorName}</b></span><button title="Cancel reply" onClick={() => { onCancelReply(); inputRef.current?.focus(); }}><X size={15} /></button></div>}
     {editing && <div className="reply-composer-banner editing-banner"><PencilIcon /><span>Editing message</span><button title="Cancel edit" onClick={onCancelEdit}><X size={15} /></button></div>}
@@ -1458,7 +1525,7 @@ function Composer(props: {
     <div className="composer-shell">
       {uploadProgress !== null && uploadProgress !== undefined && <div className="composer-upload-status" role="status"><span className="composer-upload-track"><i style={{ width: `${uploadProgress}%` }} /></span><b>Uploading files · {uploadProgress}% · {uploadSpeed || '0 KB/s'}</b></div>}
       {filesEnabled && <button className="composer-plus" title="Attach a file" onClick={() => { setActivePicker(activePicker === 'attach' ? null : 'attach'); }} disabled={disabled || busy}><Plus size={20} /></button>}
-      <div className="composer-input-wrap"><textarea ref={inputRef} value={value} onChange={autoResize} onClick={(event) => onMentionInput(value, event.currentTarget.selectionStart)} onKeyUp={(event) => onMentionInput(value, event.currentTarget.selectionStart)} onKeyDown={onKeyDown} placeholder={disabled ? 'Messages are unavailable in this channel.' : placeholder} rows={1} maxLength={4000} disabled={disabled} aria-label="Message" aria-autocomplete={mentionMatches.length ? 'list' : undefined} aria-controls={mentionMatches.length ? 'mention-suggestions' : undefined} />
+      <div className="composer-input-wrap"><textarea ref={inputRef} value={value} onChange={autoResize} onBlur={() => onTypingChange(false)} onClick={(event) => onMentionInput(value, event.currentTarget.selectionStart)} onKeyUp={(event) => onMentionInput(value, event.currentTarget.selectionStart)} onKeyDown={onKeyDown} placeholder={disabled ? 'Messages are unavailable in this channel.' : placeholder} rows={1} maxLength={4000} disabled={disabled} aria-label="Message" aria-autocomplete={mentionMatches.length ? 'list' : undefined} aria-controls={mentionMatches.length ? 'mention-suggestions' : undefined} />
         <div className="composer-buttons">
           {emojiEnabled && <button title="Emoji" onClick={() => setActivePicker(activePicker === 'emoji' ? null : 'emoji')} disabled={disabled}><Smile size={19} /></button>}
           {gifEnabled && <button title="GIF" onClick={() => setActivePicker(activePicker === 'gif' ? null : 'gif')} disabled={disabled}><span className="gif-button-label">GIF</span></button>}
@@ -1485,9 +1552,9 @@ function Dialog(props: {
   inviteCode: string; setInviteCode(value: string): void; onJoinServer(event: FormEvent): void; channelName: string; setChannelName(value: string): void;
   channelType: 'text'|'voice'; setChannelType(value: 'text'|'voice'): void; topic: string; setTopic(value: string): void; channelCategoryId: string; setChannelCategoryId(value: string): void;
   categories: Category[]; onCreateChannel(event: FormEvent): void; categoryName: string; setCategoryName(value: string): void; onCreateCategory(event: FormEvent): void;
-  inviteLink: string; activeServer: Server | null; user: User; theme: ThemeMode; setTheme(value: ThemeMode): void; cosmicThemeUnlocked: boolean; earlyExplorer: boolean; fontScale: number; setFontScale(value: number): void;
+  inviteLink: string; activeServer: Server | null; user: User; theme: ThemeMode; setTheme(value: ThemeMode): void; fontScale: number; setFontScale(value: number): void;
   desktopNotifications: boolean; setDesktopNotifications(value: boolean): void; reducedMotion: boolean; setReducedMotion(value: boolean): void; voiceSounds: boolean; setVoiceSounds(value: boolean): void; sidebarCollapsed: boolean; setSidebarCollapsed(value: boolean): void;
-  onLogout(): void; runtime: Runtime | null; apiUrl: string; connectionUrl: string; setConnectionUrl(value: string): void; onApplyApiUrl(value: string): void; token: string; notify(text: string): void; busy: boolean; onProfileChange(user: User): void;
+  onLogout(): void; runtime: Runtime | null; apiUrl: string; token: string; notify(text: string): void; busy: boolean; onProfileChange(user: User): void;
   audioDevices: MediaDeviceInfo[]; voiceInputDeviceId: string; setVoiceInputDeviceId(value: string): void; voiceOutputDeviceId: string; setVoiceOutputDeviceId(value: string): void; onSelectInputDevice(value: string): void; onSelectOutputDevice(value: string): void;
 }) {
   const { mode, setMode } = props;
@@ -1501,7 +1568,7 @@ function Dialog(props: {
   const [avatarBusy, setAvatarBusy] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const close = () => setMode(null);
-  const themeChoices: ThemeMode[] = props.cosmicThemeUnlocked ? ['dark', 'light', 'system', 'cosmic'] : ['dark', 'light', 'system'];
+  const themeChoices: ThemeMode[] = ['dark', 'light', 'system'];
   useEffect(() => {
     if (mode !== 'profile') return;
     let disposed = false;
@@ -1538,7 +1605,7 @@ function Dialog(props: {
       const form = new FormData(); form.append('avatar', avatarFile); form.append('zoom', String(avatarZoom));
       const result = await apiRequest<{ user: User; avatar: AvatarHistoryItem }>(props.apiUrl, props.token, '/api/me/avatar', { method: 'POST', body: form });
       props.onProfileChange(result.user);
-      const local = { ...result.avatar, id: `${props.user.id}:${result.avatar.id}`, local: true };
+      const local = { ...result.avatar, id: `${props.user.id}:${result.avatar.id}`, local: false };
       setAvatarHistory((current) => [local, ...current.filter((item) => item.id !== local.id)]);
       setAvatarFile(null);
       try {
@@ -1558,7 +1625,7 @@ function Dialog(props: {
         const form = new FormData(); form.append('avatar', saved.image, 'restored-avatar'); form.append('zoom', String(saved.zoom));
         const uploaded = await apiRequest<{ user: User; avatar: AvatarHistoryItem }>(props.apiUrl, props.token, '/api/me/avatar', { method: 'POST', body: form });
         props.onProfileChange(uploaded.user);
-        const local = { ...uploaded.avatar, id: `${props.user.id}:${uploaded.avatar.id}`, local: true };
+        const local = { ...uploaded.avatar, id: `${props.user.id}:${uploaded.avatar.id}`, local: false };
         setAvatarHistory((current) => [local, ...current.filter((item) => item.id !== local.id)]);
         props.notify('Avatar restored from your local backup.');
         return;
@@ -1574,7 +1641,10 @@ function Dialog(props: {
     try { const response = await apiRequest<{user:User}>(props.apiUrl, props.token, '/api/me', { method:'PATCH', body:JSON.stringify({displayName,about,status}) }); window.dispatchEvent(new CustomEvent('orbit:profile', {detail:response.user})); props.notify('Profile updated.'); close(); }
     catch (error) { props.notify(error instanceof Error ? error.message : 'Profile could not be updated.'); }
   };
-  const copyInvite = async () => { await navigator.clipboard.writeText(props.inviteLink); };
+  const copyInvite = async () => {
+    try { await window.orbit.writeClipboard(props.inviteLink); props.notify('Invite code copied.'); }
+    catch (error) { props.notify(error instanceof Error ? error.message : 'Invite code could not be copied.'); }
+  };
   const enableNotifications = async () => { if (!('Notification' in window)) return; const permission = await Notification.requestPermission(); props.setDesktopNotifications(permission === 'granted'); };
   return <div className="modal-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) close(); }} onContextMenu={(event) => { if (mode === 'profile' && event.target === event.currentTarget) { event.preventDefault(); close(); } }} onKeyDown={(event) => { if (event.key === 'Escape') close(); }}><div className={`modal-card ${mode === 'settings' ? 'settings-modal' : ''} ${mode === 'profile' ? 'profile-modal' : ''}`} role="dialog" aria-modal="true">
     {mode !== 'profile' && <button className="modal-close" title="Close" onClick={close}><X size={19} /></button>}
@@ -1595,11 +1665,11 @@ function Dialog(props: {
           <div className="avatar-editor-actions"><button type="button" className="button-subtle" onClick={() => avatarInputRef.current?.click()}><Image size={15} /> Choose image</button><button type="button" className="button-primary" disabled={!avatarFile || avatarBusy} onClick={() => void saveAvatar()}>{avatarBusy ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}{avatarBusy ? ' Saving…' : ' Save avatar'}</button></div>
           <small className="avatar-format-note">JPEG, PNG or animated GIF · up to 8 MB</small>
         </section>
-        <form className="avatar-profile-fields" onSubmit={(event) => void saveProfile(event)}><h3>Profile details</h3><label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={48} required /></label><label>About me<textarea value={about} onChange={(event) => setAbout(event.target.value)} maxLength={190} rows={2} placeholder="A little about you" /></label><label>Online status<select value={status} onChange={(event) => setStatus(event.target.value as User['status'])}><option value="online">Online</option><option value="idle">Idle</option><option value="dnd">Do not disturb</option><option value="invisible">Invisible</option></select></label><div className="profile-username">Username <b>@{props.user.username}</b>{props.earlyExplorer && <span className="explorer-profile-badge"><Sparkles size={11} /> Early Explorer</span>}</div><div className="modal-actions"><button type="button" className="button-subtle" onClick={close}>Cancel</button><button className="button-primary">Save profile</button></div></form>
+       <form className="avatar-profile-fields" onSubmit={(event) => void saveProfile(event)}><h3>Profile details</h3><label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={48} required /></label><label>About me<textarea value={about} onChange={(event) => setAbout(event.target.value)} maxLength={190} rows={2} placeholder="A little about you" /></label><label>Online status<select value={status} onChange={(event) => setStatus(event.target.value as User['status'])}><option value="online">Online</option><option value="idle">Idle</option><option value="dnd">Do not disturb</option><option value="invisible">Invisible</option></select></label><div className="profile-username">Username <b>@{props.user.username}</b></div><div className="modal-actions"><button type="button" className="button-subtle" onClick={close}>Cancel</button><button className="button-primary">Save profile</button></div></form>
       </div>
-      <section className="avatar-history"><header><div><h3>Avatar history</h3><small>Restore any picture you’ve used before.</small></div><span>{avatarHistory.length} saved</span></header>{avatarHistory.length ? <div className="avatar-history-list">{avatarHistory.map((item) => <button key={item.id} type="button" className={`avatar-history-item ${props.user.avatarUrl?.includes(item.id.split(':').at(-1) ?? item.id) ? 'selected' : ''}`} title={`Restore avatar from ${new Date(item.createdAt).toLocaleDateString()}`} disabled={avatarBusy} onClick={() => void restoreAvatar(item)}><span className="avatar-history-ring"><img src={item.local ? item.url : `${props.apiUrl}${item.url}`} alt="" style={{ transform: `scale(${item.zoom})` }} /></span><small>{props.user.avatarUrl?.includes(item.id.split(':').at(-1) ?? item.id) ? 'CURRENT' : new Date(item.createdAt).toLocaleDateString()}</small></button>)}</div> : <p className="avatar-history-empty">Your saved avatars will appear here after you choose one.</p>}</section>
+      <section className="avatar-history"><header><div><h3>Avatar history</h3><small>Restore any picture you’ve used before.</small></div><span>{avatarHistory.length} saved</span></header>{avatarHistory.length ? <div className="avatar-history-list">{avatarHistory.map((item) => <button key={item.id} type="button" className={`avatar-history-item ${props.user.avatarUrl?.includes(item.id.split(':').at(-1) ?? item.id) ? 'selected' : ''}`} title={`Restore avatar from ${new Date(item.createdAt).toLocaleDateString()}`} disabled={avatarBusy} onClick={() => void restoreAvatar(item)}><span className="avatar-history-ring"><img src={item.local ? item.url : resolveServerAssetUrl(props.apiUrl, item.url)} alt="" style={{ transform: `scale(${item.zoom})` }} /></span><small>{props.user.avatarUrl?.includes(item.id.split(':').at(-1) ?? item.id) ? 'CURRENT' : new Date(item.createdAt).toLocaleDateString()}</small></button>)}</div> : <p className="avatar-history-empty">Your saved avatars will appear here after you choose one.</p>}</section>
     </section>}
-    {mode === 'settings' && <><div className="settings-heading"><div className="modal-icon"><Settings size={24} /></div><div><h2>Preferences</h2><p>Make Orbit Chat comfortable for you.</p></div></div><div className="settings-body"><section className="settings-section"><h3>Appearance</h3><div className="theme-options">{themeChoices.map((choice) => <button key={choice} className={props.theme === choice ? 'selected' : ''} onClick={() => props.setTheme(choice)}>{choice === 'dark' ? <Moon size={17} /> : choice === 'light' ? <Sun size={17} /> : choice === 'cosmic' ? <Sparkles size={17} /> : <Zap size={17} />}{choice === 'cosmic' ? 'Cosmic Dusk' : choice[0].toUpperCase()+choice.slice(1)}{props.theme === choice && <Check size={15} />}</button>)}</div><label className="range-setting"><span>Text size <b>{props.fontScale}%</b></span><input type="range" min="90" max="120" step="5" value={props.fontScale} onChange={(event) => props.setFontScale(Number(event.target.value))} /></label><ToggleSetting title="Reduce motion" detail="Use fewer animated transitions." checked={props.reducedMotion} onChange={props.setReducedMotion} /><ToggleSetting title="Voice connection sounds" detail="Play a soft cue when you join or leave voice." checked={props.voiceSounds} onChange={props.setVoiceSounds} /><ToggleSetting title="Collapse channel sidebar" detail="Give the conversation more room." checked={props.sidebarCollapsed} onChange={props.setSidebarCollapsed} /></section><section className="settings-section"><h3>Voice & audio</h3><label>Microphone<select value={props.voiceInputDeviceId} onChange={(event) => { props.setVoiceInputDeviceId(event.target.value); void props.onSelectInputDevice(event.target.value); }}><option value="">Default microphone</option>{props.audioDevices.filter((device) => device.kind === 'audioinput').map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${device.deviceId.slice(0, 6)}`}</option>)}</select></label><label>Speaker<select value={props.voiceOutputDeviceId} onChange={(event) => { props.setVoiceOutputDeviceId(event.target.value); void props.onSelectOutputDevice(event.target.value); }}><option value="">Default speaker</option>{props.audioDevices.filter((device) => device.kind === 'audiooutput').map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Speaker ${device.deviceId.slice(0, 6)}`}</option>)}</select></label><small className="device-setting-hint">Microphone selection applies immediately while connected. Speaker selection may depend on Electron audio-device support.</small></section><section className="settings-section"><h3>Connection</h3><p className="settings-server"><Wifi size={14} /> Current API <code>{props.apiUrl}</code></p><p className="settings-server"><Wifi size={14} /> LAN {props.runtime?.lanIp ? `${props.runtime.lanIp}:${props.runtime.port}` : "IP not detected"}</p><p className="settings-server"><Wifi size={14} /> Detected public IP <code>{props.runtime?.publicIp ?? "Unavailable"}</code></p><p className="settings-server"><Wifi size={14} /> Playit {props.runtime?.playitPublicHost && props.runtime.playitPublicPort ? `${props.runtime.playitPublicHost}:${props.runtime.playitPublicPort}` : "Not configured"} <small>({props.runtime?.playitTunnelReachable ? "HTTP health verified" : props.runtime?.playitTunnelReachable === false ? "Not verified" : "Not checked"})</small></p><label>Server address<input value={props.connectionUrl} onChange={(event) => props.setConnectionUrl(event.target.value)} placeholder="https://chat.example.com" spellCheck={false} /></label><button className="button-subtle" onClick={() => props.onApplyApiUrl(props.connectionUrl)}>Apply and sign in again</button></section><section className="settings-section"><h3>Notifications</h3><ToggleSetting title="Desktop notifications" detail={"Show operating-system alerts when you aren't viewing the app."} checked={props.desktopNotifications} onChange={(enabled) => { if (enabled) void enableNotifications(); else props.setDesktopNotifications(false); }} /></section><section className="settings-section"><h3>Account</h3><div className="account-setting"><Avatar label={props.user.displayName} size="small" status={status} /><div><b>{displayName || props.user.displayName}</b><small>@{props.user.username}</small></div><button className="button-subtle" onClick={() => { close(); props.onLogout(); }}>Log out</button></div></section><section className="settings-section about-section"><h3>About Orbit Chat</h3><p>Desktop {props.runtime?.version} · API port {props.runtime?.port ?? "—"}</p><p>Data folder <b>{props.runtime?.userDataPath ?? "Unavailable"}</b></p><p>{props.runtime?.encryptionAvailable ? "Saved sessions are protected by this Windows profile." : "Secure session storage is unavailable on this system."}</p><p>Messages and files are stored on the server you connect to.</p></section></div><div className="settings-footer"><span>Orbit Chat Preferences</span><button onClick={close}>Done</button></div></>}
+    {mode === 'settings' && <><div className="settings-heading"><div className="modal-icon"><Settings size={24} /></div><div><h2>Preferences</h2><p>Make Orbit Chat comfortable for you.</p></div></div><div className="settings-body"><section className="settings-section"><h3>Appearance</h3><div className="theme-options">{themeChoices.map((choice) => <button key={choice} className={props.theme === choice ? 'selected' : ''} onClick={() => props.setTheme(choice)}>{choice === 'dark' ? <Moon size={17} /> : choice === 'light' ? <Sun size={17} /> : <Zap size={17} />}{choice[0].toUpperCase()+choice.slice(1)}{props.theme === choice && <Check size={15} />}</button>)}</div><label className="range-setting"><span>Text size <b>{props.fontScale}%</b></span><input type="range" min="90" max="120" step="5" value={props.fontScale} onChange={(event) => props.setFontScale(Number(event.target.value))} /></label><ToggleSetting title="Reduce motion" detail="Use fewer animated transitions." checked={props.reducedMotion} onChange={props.setReducedMotion} /><ToggleSetting title="Voice connection sounds" detail="Play a soft cue when you join or leave voice." checked={props.voiceSounds} onChange={props.setVoiceSounds} /><ToggleSetting title="Collapse channel sidebar" detail="Give the conversation more room." checked={props.sidebarCollapsed} onChange={props.setSidebarCollapsed} /></section><section className="settings-section"><h3>Voice & audio</h3><label>Microphone<select value={props.voiceInputDeviceId} onChange={(event) => { props.setVoiceInputDeviceId(event.target.value); void props.onSelectInputDevice(event.target.value); }}><option value="">Default microphone</option>{props.audioDevices.filter((device) => device.kind === 'audioinput').map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${device.deviceId.slice(0, 6)}`}</option>)}</select></label><label>Speaker<select value={props.voiceOutputDeviceId} onChange={(event) => { props.setVoiceOutputDeviceId(event.target.value); void props.onSelectOutputDevice(event.target.value); }}><option value="">Default speaker</option>{props.audioDevices.filter((device) => device.kind === 'audiooutput').map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Speaker ${device.deviceId.slice(0, 6)}`}</option>)}</select></label><small className="device-setting-hint">Allow microphone access to show device names. The list refreshes when devices change; speaker routing depends on Electron support.</small></section><section className="settings-section"><h3>Notifications</h3><ToggleSetting title="Desktop notifications" detail={"Show operating-system alerts when you aren't viewing the app."} checked={props.desktopNotifications} onChange={(enabled) => { if (enabled) void enableNotifications(); else props.setDesktopNotifications(false); }} /></section><section className="settings-section"><h3>Account</h3><div className="account-setting"><Avatar label={props.user.displayName} url={props.user.avatarUrl} size="small" status={status} /><div><b>{displayName || props.user.displayName}</b><small>@{props.user.username}</small></div><button className="button-subtle" onClick={() => { close(); props.onLogout(); }}>Log out</button></div></section><section className="settings-section about-section"><h3>About Orbit Chat</h3><p>Desktop {props.runtime?.version} · API port {props.runtime?.port ?? "—"}</p><p>Data folder <b>{props.runtime?.userDataPath ?? "Unavailable"}</b></p><p>{props.runtime?.encryptionAvailable ? "Saved sessions are protected by this Windows profile." : "Secure session storage is unavailable on this system."}</p><p>Messages and files are stored on the server you connect to.</p></section></div><div className="settings-footer"><span>Orbit Chat Preferences</span><button onClick={close}>Done</button></div></>}
   </div></div>;
 }
 

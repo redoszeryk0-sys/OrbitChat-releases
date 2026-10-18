@@ -1,0 +1,18 @@
+{
+  "name": "orbitchat-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OrbitChat self-hosted API server",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.7",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.1",
+    "multer": "^2.4.0",
+    "socket.io": "^4.8.4",
+    "sql.js": "^1.14.2",
+    "tsx": "^4.23.15",
+    "zod": "^4.6.7"
+  }
+}

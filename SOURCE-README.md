@@ -27,15 +27,21 @@ npm run build:portable
 npm run installer:online
 ```
 
-The desktop app includes its server application code under `server/src`. This source copy intentionally omits standalone server-hosting scripts, deployment configuration, and hosting documentation.
+The desktop app includes its server application code under `server/src`; this source repository also includes the standalone Debian server manager and its hosting documentation.
 
 ## Project files
 
 - `src/` — Electron desktop application and renderer
 - `server/src/` — API/server code used by the application
 - `tests/`, `server/test/` — automated tests
-- `installer/OfflineInstaller/` — Windows online installer and uninstaller source
-- `build/` — Windows app and installer artwork/configuration
+- `installer/OfflineInstaller/` - Windows online installer and uninstaller source
+- `installer/Updater/` - standalone, bundled app updater source
+- `scripts/`, `server-config/`, `docs/` - Debian server management, configuration examples, and hosting/backup guides
+- `build/` - Windows app and installer artwork/configuration
+
+## Automatic releases
+
+Versioned portable ZIP releases are built and published by GitHub Actions when a matching semantic-version tag is pushed. See [`docs/AUTOMATIC_RELEASES.md`](docs/AUTOMATIC_RELEASES.md) for the required `ORBITCHAT_RELEASES_TOKEN` secret and the tagging steps.
 
 ## License and third-party software
 

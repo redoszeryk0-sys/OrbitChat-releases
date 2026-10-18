@@ -3,6 +3,10 @@ export {};
 declare global {
   interface Window {
     orbit: {
+      updates: {
+        check(): Promise<{ tag: string; version: string; notes: string } | null>;
+        start(): Promise<boolean>;
+      };
       runtime(): Promise<{
         name: string; version: string; localApiUrl: string; lanIp: string | null; lanApiUrl: string | null; port: number;
         publicIp: string | null; playitPublicHost: string | null; playitPublicPort: number | null;
@@ -12,6 +16,7 @@ declare global {
       getSession(serverUrl: string): Promise<string | null>;
       saveSession(serverUrl: string, token: string | null): Promise<boolean>;
       openExternal(url: string): Promise<boolean>;
+      writeClipboard(text: string): Promise<boolean>;
       downloadAttachment(serverUrl: string, attachmentPath: string, token: string): Promise<boolean>;
       window: {
         minimize(): void;
