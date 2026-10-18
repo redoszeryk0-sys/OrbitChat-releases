@@ -4,11 +4,7 @@ The GitHub Actions workflow in `.github/workflows/release.yml` builds and publis
 
 ## One-time GitHub setup
 
-1. Push this source project to its own GitHub repository. `OrbitChat-releases` is the download repository; keep the source code and workflow in a separate source repository.
-2. Create a fine-grained personal access token that grants **Contents: Read and write** on `redoszeryk0-sys/OrbitChat-releases` only.
-3. In the source repository, add that token under **Settings → Secrets and variables → Actions** with the name `ORBITCHAT_RELEASES_TOKEN`.
-
-Keep the token secret; never put it in the workflow file or app source.
+The source and release assets live in the same `OrbitChat-releases` repository, so no personal access token or paid release service is needed. The workflow uses GitHub's built-in `GITHUB_TOKEN` with repository contents write permission. Make sure GitHub Actions are enabled for the repository.
 
 ## Publishing a version
 

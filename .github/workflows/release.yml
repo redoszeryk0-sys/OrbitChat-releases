@@ -6,7 +6,7 @@ on:
       - '*.*.*'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: orbit-chat-release-${{ github.ref }}
@@ -81,10 +81,9 @@ jobs:
       - name: Publish to OrbitChat-releases
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.ORBITCHAT_RELEASES_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) { throw 'Add the ORBITCHAT_RELEASES_TOKEN Actions secret before publishing.' }
           $repo = 'redoszeryk0-sys/OrbitChat-releases'
           $tag = $env:GITHUB_REF_NAME
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
