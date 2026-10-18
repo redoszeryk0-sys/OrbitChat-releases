@@ -1,0 +1,55 @@
+name: Update release notes and latest badge
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/releases/*.md'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/release-metadata.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Apply curated notes and keep Online_installer latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = 'redoszeryk0-sys/OrbitChat-releases'
+
+          function Update-Release([int]$releaseId, [hashtable]$metadata, [string]$label) {
+            $payloadPath = Join-Path $env:RUNNER_TEMP "release-metadata-$releaseId.json"
+            [System.IO.File]::WriteAllText($payloadPath, ($metadata | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+            & gh api --method PATCH "repos/$repo/releases/$releaseId" --input $payloadPath
+            if ($LASTEXITCODE -ne 0) { throw "Could not update $label metadata." }
+          }
+
+          foreach ($notesFile in Get-ChildItem -LiteralPath 'docs/releases' -Filter '*.md' -File) {
+            if ($notesFile.BaseName -notmatch '^\d+\.\d+\.\d+$') { continue }
+            $tag = $notesFile.BaseName
+            $releaseJson = & gh api "repos/$repo/releases/tags/$tag"
+            if ($LASTEXITCODE -ne 0) { Write-Host "Skipping $tag because its release has not been created yet."; continue }
+            $releaseInfo = ($releaseJson -join "`n") | ConvertFrom-Json
+            Update-Release $releaseInfo.id @{ body = (Get-Content -LiteralPath $notesFile.FullName -Raw); make_latest = 'false' } $tag
+          }
+
+          $onlineInstallerJson = & gh api "repos/$repo/releases/tags/Online_installer"
+          if ($LASTEXITCODE -ne 0) { throw 'The Online_installer release was not found.' }
+          $onlineInstaller = ($onlineInstallerJson -join "`n") | ConvertFrom-Json
+
+          $legacyUpdater = $onlineInstaller.assets | Where-Object name -eq 'Orbit-Chat-Updater.exe' | Select-Object -First 1
+          if ($legacyUpdater) {
+            & gh api --method DELETE "repos/$repo/releases/assets/$($legacyUpdater.id)"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not remove the standalone updater from Online_installer.' }
+          }
+          Update-Release $onlineInstaller.id @{ make_latest = 'true' } 'Online_installer'

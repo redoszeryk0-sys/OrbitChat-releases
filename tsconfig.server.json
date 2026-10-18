@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "Node16",
+    "outDir": "server/dist",
+    "rootDir": "server/src",
+    "types": ["node"],
+    "sourceMap": true
+  },
+  "include": ["server/src/**/*.ts"]
+}

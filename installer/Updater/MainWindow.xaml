@@ -1,0 +1,105 @@
+<Window x:Class="OrbitChat.Updater.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Orbit Chat Updater" Width="560" Height="610"
+        MinWidth="560" MaxWidth="560" MinHeight="610" MaxHeight="610"
+        ResizeMode="NoResize" WindowStyle="None" AllowsTransparency="True"
+        Background="Transparent" WindowStartupLocation="CenterScreen"
+        UseLayoutRounding="True" Icon="pack://application:,,,/Assets/OrbitChat.ico"
+        Loaded="Window_Loaded">
+  <Border Margin="8" Background="{StaticResource WindowBrush}" BorderBrush="#403A50" BorderThickness="1" CornerRadius="15">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="49" />
+        <RowDefinition Height="1" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="1" />
+        <RowDefinition Height="62" />
+      </Grid.RowDefinitions>
+      <Grid Grid.Row="0" Background="{StaticResource WindowBrush}" MouseLeftButtonDown="Header_MouseLeftButtonDown">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="40" /><ColumnDefinition Width="40" /></Grid.ColumnDefinitions>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="19,0,0,0">
+          <Border Width="24" Height="24" CornerRadius="8" Background="#28233C" BorderBrush="#695F8B" BorderThickness="1" Margin="0,0,9,0">
+            <TextBlock Text="◉" Foreground="#C2B6F4" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <TextBlock Text="Orbit Chat" Foreground="{StaticResource TextBrush}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+          <TextBlock Text="  /  Updater" Foreground="{StaticResource MutedBrush}" FontSize="10" VerticalAlignment="Center" />
+        </StackPanel>
+        <Button Grid.Column="1" Content="—" Style="{StaticResource WindowButton}" Click="MinimizeButton_Click" />
+        <Button x:Name="CloseButton" Grid.Column="2" Content="×" Style="{StaticResource WindowButton}" Click="CloseButton_Click" />
+      </Grid>
+      <Border Grid.Row="1" Background="#302C3A" />
+
+      <Grid Grid.Row="2" Margin="28,24,28,22">
+        <StackPanel x:Name="ReviewStep">
+          <TextBlock Text="SOFTWARE UPDATE" Foreground="#B5A8EE" FontSize="9" FontWeight="Bold" />
+          <TextBlock x:Name="HeadingText" Text="Checking for updates…" Foreground="{StaticResource TextBrush}" FontSize="24" FontWeight="SemiBold" Margin="0,10,0,4" TextWrapping="Wrap" />
+          <TextBlock x:Name="StatusText" Text="Connecting securely to Orbit Chat Releases." Foreground="{StaticResource MutedBrush}" FontSize="11" LineHeight="18" TextWrapping="Wrap" />
+          <Border x:Name="VersionCard" Visibility="Collapsed" Margin="0,20,0,0" Padding="15" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="10">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <StackPanel><TextBlock Text="INSTALLED" Foreground="{StaticResource MutedBrush}" FontSize="8" FontWeight="SemiBold" /><TextBlock x:Name="CurrentVersionText" Text="—" Foreground="#C8C2D5" FontSize="16" FontWeight="SemiBold" Margin="0,5,0,0" /></StackPanel>
+              <TextBlock Grid.Column="1" Text="→" Foreground="#9586D7" FontSize="19" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              <StackPanel Grid.Column="2"><TextBlock Text="UPDATE" Foreground="{StaticResource MutedBrush}" FontSize="8" FontWeight="SemiBold" /><TextBlock x:Name="UpdateVersionText" Text="—" Foreground="#E6DFFF" FontSize="16" FontWeight="SemiBold" Margin="0,5,0,0" /></StackPanel>
+            </Grid>
+          </Border>
+          <TextBlock x:Name="NotesHeading" Text="RELEASE NOTES" Foreground="{StaticResource MutedBrush}" FontSize="8" FontWeight="SemiBold" Margin="1,20,0,7" Visibility="Collapsed" />
+          <Border x:Name="NotesCard" Visibility="Collapsed" Height="118" Padding="10" Background="#1C1A23" BorderBrush="#332F3D" BorderThickness="1" CornerRadius="8">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+              <TextBlock x:Name="ReleaseNotesText" Foreground="#C4BECE" FontSize="10" LineHeight="16" TextWrapping="Wrap" />
+            </ScrollViewer>
+          </Border>
+          <Border x:Name="KeepDataNotice" Visibility="Collapsed" Margin="0,14,0,0" Padding="10" Background="#22212A" BorderBrush="#393546" BorderThickness="1" CornerRadius="8">
+            <TextBlock Text="Your account data, settings, and shortcuts will be kept." Foreground="#C7C1D2" FontSize="10" TextWrapping="Wrap" />
+          </Border>
+          <Button x:Name="InstallUpdateButton" Content="Install update" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Margin="0,18,0,0" Visibility="Collapsed" Click="InstallUpdateButton_Click" />
+          <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+            <Button x:Name="RetryButton" Content="Check again" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Left" Margin="0,0,9,0" Visibility="Collapsed" Click="RetryButton_Click" />
+            <Button x:Name="OpenCurrentAppButton" Content="Open Orbit Chat" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Left" Visibility="Collapsed" Click="OpenCurrentAppButton_Click" />
+          </StackPanel>
+        </StackPanel>
+
+        <StackPanel x:Name="ProgressStep" Visibility="Collapsed">
+          <TextBlock Text="INSTALLING UPDATE" Foreground="#B5A8EE" FontSize="9" FontWeight="Bold" />
+          <TextBlock Text="Updating Orbit Chat." Foreground="{StaticResource TextBrush}" FontSize="24" FontWeight="SemiBold" Margin="0,10,0,4" />
+          <TextBlock x:Name="ProgressCaption" Text="Preparing the update…" Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" />
+          <ProgressBar x:Name="UpdateProgress" Minimum="0" Maximum="100" Value="0" Height="6" Margin="0,23,0,8" Foreground="#9B8DE1" Background="#302C3A" BorderThickness="0" />
+          <TextBlock x:Name="ProgressDetail" Text="Waiting for Orbit Chat to close." Foreground="#878193" FontSize="9" TextWrapping="Wrap" />
+          <StackPanel Margin="0,24,0,0">
+            <TextBlock x:Name="ProgressClose" Text="○   Close Orbit Chat and release its files" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,0,0,8" />
+            <TextBlock x:Name="ProgressDownload" Text="○   Download the selected release" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,0,0,8" />
+            <TextBlock x:Name="ProgressVerify" Text="○   Verify the published SHA-256" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,0,0,8" />
+            <TextBlock x:Name="ProgressExtract" Text="○   Safely extract and validate app files" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,0,0,8" />
+            <TextBlock x:Name="ProgressPreserve" Text="○   Preserve install settings and shortcuts" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,0,0,8" />
+            <TextBlock x:Name="ProgressInstall" Text="○   Replace app files and update registration" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,0,0,8" />
+            <TextBlock x:Name="ProgressFinish" Text="○   Finish and clean up temporary files" Foreground="{StaticResource MutedBrush}" FontSize="10" />
+          </StackPanel>
+        </StackPanel>
+
+        <StackPanel x:Name="CompleteStep" Visibility="Collapsed">
+          <TextBlock Text="UPDATE COMPLETE" Foreground="#83D4A7" FontSize="9" FontWeight="Bold" />
+          <TextBlock Text="Orbit Chat is up to date." Foreground="{StaticResource TextBrush}" FontSize="24" FontWeight="SemiBold" Margin="0,10,0,4" />
+          <TextBlock x:Name="CompleteVersionText" Text="Orbit Chat has been updated." Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" />
+          <Border Margin="0,24,0,0" Padding="13" Background="#1F2824" BorderBrush="#345343" BorderThickness="1" CornerRadius="9">
+            <TextBlock Text="Your account data, settings, and shortcuts were preserved." Foreground="#C2D6C8" FontSize="10" TextWrapping="Wrap" />
+          </Border>
+          <TextBlock Text="Would you like to open Orbit Chat now?" Foreground="{StaticResource TextBrush}" FontSize="11" FontWeight="SemiBold" Margin="1,22,0,11" />
+          <StackPanel Orientation="Horizontal">
+            <Button Content="Open &amp; exit" Style="{StaticResource PrimaryButton}" Margin="0,0,9,0" Click="OpenAndExitButton_Click" />
+            <Button Content="Exit" Style="{StaticResource SecondaryButton}" Click="ExitButton_Click" />
+          </StackPanel>
+        </StackPanel>
+      </Grid>
+
+      <Border Grid.Row="3" Background="#302C3A" />
+      <Grid Grid.Row="4" Margin="22,0">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock x:Name="FooterVersionText" Text="ORBIT CHAT UPDATER" Foreground="#7E788C" FontSize="8" FontWeight="SemiBold" />
+          <TextBlock Text="Secure update · account data preserved" Foreground="#635E6E" FontSize="8" Margin="0,4,0,0" />
+        </StackPanel>
+        <Button x:Name="CancelButton" Grid.Column="1" Content="Cancel" Style="{StaticResource SecondaryButton}" MinWidth="82" Height="34" Click="ExitButton_Click" />
+      </Grid>
+    </Grid>
+  </Border>
+</Window>

@@ -1,0 +1,578 @@
+<Window x:Class="OrbitChat.SetupPreview.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Orbit Chat Online Installer" Width="620" Height="700"
+        MinWidth="620" MaxWidth="620" MinHeight="700" MaxHeight="700"
+        ResizeMode="NoResize" WindowStyle="None" AllowsTransparency="True"
+        Background="Transparent" WindowStartupLocation="CenterScreen"
+        UseLayoutRounding="True" Icon="pack://application:,,,/Assets/OrbitChat.ico">
+  <Window.Resources>
+    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#41385C" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#F4F1FF" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#211F29" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" Color="#211F29" />
+    <Storyboard x:Key="SlideForward">
+      <DoubleAnimation Storyboard.TargetName="StepPanel" Storyboard.TargetProperty="Opacity"
+                       From="0" To="1" Duration="0:0:0.28" />
+      <DoubleAnimation Storyboard.TargetName="StepSlide" Storyboard.TargetProperty="X"
+                       From="28" To="0" Duration="0:0:0.34">
+        <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut" /></DoubleAnimation.EasingFunction>
+      </DoubleAnimation>
+    </Storyboard>
+    <Storyboard x:Key="SlideBackward">
+      <DoubleAnimation Storyboard.TargetName="StepPanel" Storyboard.TargetProperty="Opacity"
+                       From="0" To="1" Duration="0:0:0.28" />
+      <DoubleAnimation Storyboard.TargetName="StepSlide" Storyboard.TargetProperty="X"
+                       From="-28" To="0" Duration="0:0:0.34">
+        <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut" /></DoubleAnimation.EasingFunction>
+      </DoubleAnimation>
+    </Storyboard>
+    <Storyboard x:Key="ProgressPulse" RepeatBehavior="Forever" AutoReverse="True">
+      <DoubleAnimation Storyboard.TargetName="ProgressGlow" Storyboard.TargetProperty="Opacity"
+                       From="0.55" To="1" Duration="0:0:1.1" />
+    </Storyboard>
+    <Style x:Key="FieldLabel" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+      <Setter Property="Margin" Value="1,0,0,8" />
+    </Style>
+    <Style x:Key="WindowControlButton" TargetType="Button">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Foreground" Value="#A9A4B5" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ControlSurface" Background="{TemplateBinding Background}" CornerRadius="4">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ControlSurface" Property="Background" Value="#2B2834" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="ControlSurface" Property="Opacity" Value="0.78" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Foreground" Value="#716D7A" />
+                <Setter Property="Cursor" Value="Arrow" />
+                <Setter TargetName="ControlSurface" Property="Background" Value="Transparent" />
+                <Setter TargetName="ControlSurface" Property="Opacity" Value="1" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="ComboDropToggle" TargetType="ToggleButton">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="VerticalContentAlignment" Value="Stretch" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Border HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="Transparent" BorderThickness="0">
+              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="PreviewCombo" TargetType="ComboBox">
+      <Setter Property="Height" Value="52" />
+      <Setter Property="Foreground" Value="#EEEFF4" />
+      <Setter Property="Background" Value="#211F29" />
+      <Setter Property="BorderBrush" Value="#423D50" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+      <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ComboBox">
+          <Grid x:Name="ComboRoot" SnapsToDevicePixels="True">
+              <ToggleButton x:Name="DropToggle" Focusable="False" FocusVisualStyle="{x:Null}"
+                            ClickMode="Press" Style="{StaticResource ComboDropToggle}"
+                            IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                <Border x:Name="ComboSurface" Background="{TemplateBinding Background}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        CornerRadius="10" Padding="12,5">
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="24" /></Grid.ColumnDefinitions>
+                    <ContentPresenter x:Name="SelectedItemPresenter" Grid.Column="0"
+                                      Content="{TemplateBinding SelectionBoxItem}"
+                                      ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                      ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                      HorizontalAlignment="Stretch" VerticalAlignment="Center" />
+                    <Border Grid.Column="1" Width="24" Height="24" CornerRadius="7"
+                            Background="#302B3D" HorizontalAlignment="Right" VerticalAlignment="Center">
+                      <Path Width="8" Height="5" Data="M 1,1 L 4,4 L 7,1"
+                            Stroke="#C7BDF2" StrokeThickness="1.35" StrokeStartLineCap="Round"
+                            StrokeEndLineCap="Round" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                  </Grid>
+                </Border>
+              </ToggleButton>
+              <Popup x:Name="PART_Popup" AllowsTransparency="True" Focusable="False"
+                     Placement="Bottom" PlacementTarget="{Binding ElementName=ComboRoot}"
+                     HorizontalOffset="0" VerticalOffset="5"
+                     Width="{Binding ActualWidth, ElementName=ComboRoot}"
+                     IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="Fade">
+                <Border x:Name="PopupSurface"
+                        MaxHeight="270" Margin="0,6,0,0" Padding="5"
+                        Background="#211F29" BorderBrush="#514A63" BorderThickness="1"
+                        CornerRadius="11" SnapsToDevicePixels="True">
+                  <Border.Effect>
+                    <DropShadowEffect BlurRadius="20" ShadowDepth="7" Opacity="0.48" Color="#000000" />
+                  </Border.Effect>
+                  <ScrollViewer MaxHeight="258" CanContentScroll="{TemplateBinding ScrollViewer.CanContentScroll}"
+                                HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained" />
+                  </ScrollViewer>
+                </Border>
+              </Popup>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ComboSurface" Property="BorderBrush" Value="#7669A8" />
+                <Setter TargetName="ComboSurface" Property="Background" Value="#282532" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter TargetName="ComboSurface" Property="BorderBrush" Value="#9A8BDA" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="ComboSurface" Property="Opacity" Value="0.5" />
+              </Trigger>
+              <Trigger Property="HasItems" Value="False">
+                <Setter TargetName="PopupSurface" Property="MinHeight" Value="42" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Setter Property="ItemContainerStyle">
+        <Setter.Value>
+          <Style TargetType="ComboBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,2" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Focusable" Value="True" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+              <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                  <Border x:Name="ItemSurface" Background="Transparent" BorderBrush="Transparent"
+                          BorderThickness="1" CornerRadius="8" Padding="10,8" SnapsToDevicePixels="True">
+                    <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center" />
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsHighlighted" Value="True">
+                      <Setter TargetName="ItemSurface" Property="Background" Value="#302B3D" />
+                      <Setter TargetName="ItemSurface" Property="BorderBrush" Value="#49415F" />
+                    </Trigger>
+                    <Trigger Property="IsSelected" Value="True">
+                      <Setter TargetName="ItemSurface" Property="Background" Value="#343047" />
+                      <Setter TargetName="ItemSurface" Property="BorderBrush" Value="#574C76" />
+                    </Trigger>
+                    <Trigger Property="IsEnabled" Value="False">
+                      <Setter TargetName="ItemSurface" Property="Opacity" Value="0.5" />
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </Setter.Value>
+            </Setter>
+          </Style>
+        </Setter.Value>
+      </Setter>
+      <Setter Property="ItemTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <Grid MinHeight="34">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+              <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="{Binding Label}" FontSize="11" FontWeight="SemiBold" Foreground="#EEEFF4" />
+                <TextBlock Text="{Binding Subtitle}" Margin="0,2,0,0" FontSize="9" Foreground="#8F899F" />
+              </StackPanel>
+              <Border x:Name="NewestBadge" Grid.Column="1" Margin="0,0,8,0" Padding="8,4" CornerRadius="8"
+                      Background="#332C48" BorderBrush="#524577" BorderThickness="1"
+                      VerticalAlignment="Center" Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="✦" Foreground="#D5CAFF" FontSize="9" Margin="0,0,4,0" />
+                  <TextBlock Text="NEWEST" Foreground="#D5CAFF" FontSize="8" FontWeight="Bold" />
+                </StackPanel>
+              </Border>
+            </Grid>
+            <DataTemplate.Triggers>
+              <DataTrigger Binding="{Binding IsNewest}" Value="True">
+                <Setter TargetName="NewestBadge" Property="Visibility" Value="Visible" />
+              </DataTrigger>
+            </DataTemplate.Triggers>
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="PreviewTextBox" TargetType="TextBox">
+      <Setter Property="Height" Value="38" />
+      <Setter Property="Padding" Value="11,0" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Foreground" Value="#D8D4E2" />
+      <Setter Property="CaretBrush" Value="{StaticResource AccentLightBrush}" />
+      <Setter Property="Background" Value="#211F29" />
+      <Setter Property="BorderBrush" Value="#393544" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="PreviewCheck" TargetType="CheckBox">
+      <Setter Property="Foreground" Value="#C1BDCE" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="PreviewRadio" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="#C1BDCE" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="FooterButton" TargetType="Button">
+      <Setter Property="MinWidth" Value="94" />
+      <Setter Property="Padding" Value="13,10" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Foreground" Value="#D8D4E2" />
+      <Setter Property="Background" Value="#292632" />
+      <Setter Property="BorderBrush" Value="#393544" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ButtonSurface" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="8" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ButtonSurface" Property="Background" Value="#353240" />
+                <Setter TargetName="ButtonSurface" Property="BorderBrush" Value="#504A60" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonSurface" Property="Opacity" Value="0.82" /></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonSurface" Property="Opacity" Value="0.45" /></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource FooterButton}">
+      <Setter Property="MinWidth" Value="152" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Background" Value="#655A9D" />
+      <Setter Property="BorderBrush" Value="#7C70B7" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ButtonSurface" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="8" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ButtonSurface" Property="Background" Value="#776BB0" />
+                <Setter TargetName="ButtonSurface" Property="BorderBrush" Value="#998DD1" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonSurface" Property="Opacity" Value="0.84" /></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonSurface" Property="Opacity" Value="0.45" /></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+
+  <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource LineBrush}"
+          BorderThickness="1" CornerRadius="13" SnapsToDevicePixels="True">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="54" />
+        <RowDefinition Height="94" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="78" />
+      </Grid.RowDefinitions>
+
+      <!-- Frameless but movable title bar; system minimize and close remain available. -->
+      <Grid Grid.Row="0" Background="#17151E" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="42" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="44" />
+          <ColumnDefinition Width="44" />
+        </Grid.ColumnDefinitions>
+        <Image Source="pack://application:,,,/Assets/OrbitChat.ico" Width="25" Height="25" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock Text="Orbit Chat" FontSize="13" FontWeight="SemiBold" />
+          <TextBlock Text="  /  Setup" Foreground="#8E899B" FontSize="12" />
+        </StackPanel>
+        <Border Grid.Column="2" Margin="0,0,11,0" Padding="9,4" CornerRadius="10"
+                Background="#292336" BorderBrush="#443A61" BorderThickness="1" VerticalAlignment="Center">
+          <TextBlock Text="ONLINE INSTALLER" Foreground="{StaticResource AccentLightBrush}"
+                     FontSize="9" FontWeight="SemiBold" />
+        </Border>
+        <Button Grid.Column="3" Content="—" FontSize="17" Style="{StaticResource WindowControlButton}"
+                Background="Transparent" BorderThickness="0" Cursor="Hand"
+                Click="MinimizeButton_Click" ToolTip="Minimize setup to the taskbar" />
+        <Button x:Name="CloseButton" Grid.Column="4" Content="×" FontSize="19" Style="{StaticResource WindowControlButton}"
+                Background="Transparent" BorderThickness="0" Cursor="Hand"
+                Click="CloseButton_Click" ToolTip="Close installer" />
+      </Grid>
+
+      <!-- Compact step tracker: active, completed, and upcoming states. -->
+      <Border Grid.Row="1" Background="#191720" BorderBrush="#302D3A" BorderThickness="0,0,0,1" Padding="23,13,22,9">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="39" /><RowDefinition Height="18" /></Grid.RowDefinitions>
+          <Canvas x:Name="StepLineCanvas" Height="1" VerticalAlignment="Center" Margin="25,0,25,0" Background="#393544">
+            <Border x:Name="StepProgressLine" Width="0" Height="2" Background="#887BCF" />
+          </Canvas>
+          <UniformGrid Grid.Row="0" x:Name="StepTracker" Rows="1" IsHitTestVisible="False" />
+          <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" />
+              <ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="StepLabel0" Grid.Column="0" Text="Welcome" FontSize="8" HorizontalAlignment="Center" Foreground="#777282" />
+            <TextBlock x:Name="StepLabel1" Grid.Column="1" Text="Notice" FontSize="8" HorizontalAlignment="Center" Foreground="#777282" />
+            <TextBlock x:Name="StepLabel2" Grid.Column="2" Text="Options" FontSize="8" HorizontalAlignment="Center" Foreground="#777282" />
+            <TextBlock x:Name="StepLabel3" Grid.Column="3" Text="Review" FontSize="8" HorizontalAlignment="Center" Foreground="#777282" />
+            <TextBlock x:Name="StepLabel4" Grid.Column="4" Text="Install" FontSize="8" HorizontalAlignment="Center" Foreground="#777282" />
+            <TextBlock x:Name="StepLabel5" Grid.Column="5" Text="Done" FontSize="8" HorizontalAlignment="Center" Foreground="#777282" />
+          </Grid>
+        </Grid>
+      </Border>
+
+      <!-- The content is swapped only for this design preview and slides on each step. -->
+      <Grid Grid.Row="2" ClipToBounds="True" Margin="28,20,28,15">
+        <StackPanel x:Name="StepPanel" Opacity="1">
+          <StackPanel.RenderTransform><TranslateTransform x:Name="StepSlide" X="0" /></StackPanel.RenderTransform>
+
+          <!-- Step 0: welcome and automatic detection explanation. -->
+          <StackPanel x:Name="WelcomeStep">
+            <TextBlock Text="A quieter place for your community." FontSize="23" FontWeight="SemiBold"
+                       LineHeight="30" TextWrapping="Wrap" />
+            <TextBlock Text="Choose an Orbit Chat release and install it directly from GitHub. The selected Windows package is downloaded and verified before setup. Your app data stays in your Windows profile."
+                       Margin="0,8,0,19" FontSize="12" Foreground="{StaticResource MutedBrush}"
+                       LineHeight="19" TextWrapping="Wrap" />
+            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}"
+                    BorderThickness="1" CornerRadius="11" Padding="15,13" Margin="0,0,0,18">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="43" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Border Width="36" Height="36" CornerRadius="11" Background="#302B40"
+                        BorderBrush="#49415F" BorderThickness="1" VerticalAlignment="Center">
+                  <Image Source="pack://application:,,,/Assets/OrbitChat.ico" Width="26" Height="26" Stretch="Uniform" />
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="10,0,0,0">
+                  <TextBlock Text="Orbit Chat" FontSize="13" FontWeight="SemiBold" />
+            <TextBlock Text="GitHub releases · Windows 64-bit" Margin="0,3,0,0" FontSize="10" Foreground="{StaticResource MutedBrush}" />
+                </StackPanel>
+                <Border Grid.Column="2" Padding="8,4" CornerRadius="7" Background="#25222E" VerticalAlignment="Center">
+                  <StackPanel Orientation="Horizontal">
+                    <Ellipse Width="6" Height="6" Fill="#51C78B" VerticalAlignment="Center" />
+                    <TextBlock Text="  NEWEST" Foreground="#A5DCC0" FontSize="9" FontWeight="SemiBold" VerticalAlignment="Center" />
+                  </StackPanel>
+                </Border>
+              </Grid>
+            </Border>
+            <Border Background="#211D2D" BorderBrush="#383049" BorderThickness="1"
+                    CornerRadius="9" Padding="12,10" Margin="0,11,0,0">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="5" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Border Background="#887BCF" CornerRadius="3" />
+                <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                  <TextBlock Text="Official Orbit Chat release" FontSize="11" FontWeight="SemiBold" Foreground="#EEEFF4" />
+                  <TextBlock Text="The installer reads available release versions and downloads the selected portable ZIP over HTTPS."
+                             Margin="0,3,0,0" FontSize="10" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+              </Grid>
+            </Border>
+          </StackPanel>
+
+          <!-- Step 1: display only the actual repository license text. -->
+          <StackPanel x:Name="NoticeStep" Visibility="Collapsed">
+            <TextBlock Text="A quick note before continuing." FontSize="22" FontWeight="SemiBold" />
+            <TextBlock Text="Orbit Chat notice" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,7,0,15" />
+            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="16" Height="235">
+              <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="#D0CBD8" LineHeight="20">
+                  <Run Text="Orbit Chat is an independent communication application." />
+                  <LineBreak /><LineBreak />
+                  <Run Text="This application is provided for personal use and self-hosting. It is not affiliated with, endorsed by, or derived from Discord. Orbit Chat branding and interface assets are original to this project." />
+                  <LineBreak /><LineBreak />
+                  <Run Text="Third-party dependencies retain their respective licenses. Review their license notices before redistribution." />
+                </TextBlock>
+              </ScrollViewer>
+            </Border>
+            <CheckBox x:Name="NoticeAcknowledgement" Margin="2,16,0,0" Style="{StaticResource PreviewCheck}"
+                      Content="I have read this notice."
+                      Checked="NoticeAcknowledgement_Changed" Unchecked="NoticeAcknowledgement_Changed" />
+            <Border Background="#211D2D" BorderBrush="#383049" BorderThickness="1"
+                    CornerRadius="8" Padding="11,9" Margin="0,15,0,0">
+              <TextBlock Text="Preview note: this is the repository's existing notice, not a new EULA or privacy policy."
+                         Foreground="#BAB3CC" FontSize="10" TextWrapping="Wrap" LineHeight="15" />
+            </Border>
+          </StackPanel>
+
+          <!-- Step 2: release selection, install directory and scope. Installed app detection is automatic. -->
+          <StackPanel x:Name="OptionsStep" Visibility="Collapsed">
+            <TextBlock Text="Choose your install options." FontSize="22" FontWeight="SemiBold" />
+            <TextBlock Text="Versions come from Orbit Chat GitHub releases. The newest semantic version is selected by default."
+                       FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,7,0,17" TextWrapping="Wrap" />
+            <TextBlock Text="VERSION TO INSTALL" Style="{StaticResource FieldLabel}" />
+            <ComboBox x:Name="VersionSelector" Style="{StaticResource PreviewCombo}" IsEnabled="False"
+                      SelectionChanged="VersionSelector_SelectionChanged" Margin="0,0,0,13" />
+            <TextBlock x:Name="ReleaseCatalogStatus" Text="Loading releases from GitHub…" Margin="1,0,0,12"
+                       FontSize="9" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+            <Button x:Name="RetryReleasesButton" Content="Retry release lookup" Visibility="Collapsed"
+                    HorizontalAlignment="Left" Margin="0,0,0,12" Style="{StaticResource FooterButton}"
+                    Click="RetryReleasesButton_Click" />
+            <Border Background="#211D2D" BorderBrush="#383049" BorderThickness="1"
+                    CornerRadius="8" Padding="11,10" Margin="0,0,0,16">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="8" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Border x:Name="ActionIndicator" Background="#887BCF" CornerRadius="3" />
+                <StackPanel Grid.Column="1" Margin="9,0,0,0">
+                  <TextBlock x:Name="ActionHeading" Text="Install" FontSize="11" FontWeight="SemiBold" />
+                  <TextBlock x:Name="ActionDescription" Text="Choose a release to continue." Margin="0,3,0,0" FontSize="10" Foreground="{StaticResource MutedBrush}" />
+                </StackPanel>
+              </Grid>
+            </Border>
+            <TextBlock Text="INSTALL LOCATION" Style="{StaticResource FieldLabel}" />
+            <Grid Margin="0,0,0,16">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+              <TextBox x:Name="InstallPathBox" Style="{StaticResource PreviewTextBox}" />
+              <Button Grid.Column="1" Content="Browse" Margin="8,0,0,0" Style="{StaticResource FooterButton}" Click="BrowseButton_Click" />
+            </Grid>
+            <TextBlock Text="Browse to an existing Orbit Chat folder to update it, or choose a parent folder for a new Orbit Chat subfolder."
+                       Margin="1,0,0,0" FontSize="9" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+          </StackPanel>
+
+          <!-- Step 3: concise review; nothing here is committed to the machine. -->
+          <StackPanel x:Name="ReviewStep" Visibility="Collapsed">
+            <TextBlock Text="Ready when you are." FontSize="22" FontWeight="SemiBold" />
+            <TextBlock Text="Review the selected release and destination before downloading." FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,7,0,18" />
+            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="10" Padding="16">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="130" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <TextBlock Text="ACTION" FontSize="9" Foreground="{StaticResource MutedBrush}" />
+                <TextBlock x:Name="ReviewAction" Grid.Column="1" Text="Fresh installation" FontSize="11" FontWeight="SemiBold" />
+                <Border Grid.Row="1" Grid.ColumnSpan="2" Height="1" Background="{StaticResource LineBrush}" Margin="0,12,0,12" />
+                <TextBlock Grid.Row="2" Text="SELECTED VERSION" FontSize="9" Foreground="{StaticResource MutedBrush}" />
+                <TextBlock x:Name="ReviewVersion" Grid.Row="2" Grid.Column="1" Text="1.2.0" FontSize="11" />
+                <Border Grid.Row="3" Grid.ColumnSpan="2" Height="1" Background="{StaticResource LineBrush}" Margin="0,12,0,12" />
+                <TextBlock Grid.Row="4" Text="INSTALL LOCATION" FontSize="9" Foreground="{StaticResource MutedBrush}" />
+                <TextBlock x:Name="ReviewPath" Grid.Row="4" Grid.Column="1" TextWrapping="Wrap" FontSize="10" Foreground="#D0CBD8" />
+              </Grid>
+            </Border>
+            <Border Background="#211D2D" BorderBrush="#383049" BorderThickness="1" CornerRadius="8" Padding="11,10" Margin="0,17,0,0">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="✦" Foreground="{StaticResource AccentLightBrush}" FontSize="12" Margin="0,0,9,0" />
+                <TextBlock Text="The release ZIP is downloaded from GitHub and SHA-256 checked when GitHub provides a digest." FontSize="10" Foreground="#BAB3CC" TextWrapping="Wrap" VerticalAlignment="Center" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <!-- Step 4: download, verify, extract, and install the selected release. -->
+          <StackPanel x:Name="ProgressStep" Visibility="Collapsed">
+            <TextBlock Text="Updating Orbit Chat." FontSize="22" FontWeight="SemiBold" />
+            <TextBlock Text="Follow each stage as the release is downloaded, verified, extracted, and installed."
+                       Margin="0,8,0,21" FontSize="12" Foreground="{StaticResource MutedBrush}" LineHeight="19" TextWrapping="Wrap" />
+            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="10" Padding="15" Margin="0,0,0,15">
+              <StackPanel>
+                <Grid Margin="0,0,0,9">
+                  <TextBlock x:Name="ProgressCaption" Text="Connecting to GitHub…" FontSize="10" Foreground="#D8D4E2" />
+                  <TextBlock x:Name="ProgressPercent" Text="8%" FontSize="10" Foreground="{StaticResource AccentLightBrush}" HorizontalAlignment="Right" />
+                </Grid>
+                <Border Height="6" Background="#302D3A" CornerRadius="4" ClipToBounds="True">
+                  <Border x:Name="ProgressGlow" Width="42" HorizontalAlignment="Left" Background="{StaticResource AccentBrush}" CornerRadius="4" Opacity="0.9" />
+                </Border>
+                <TextBlock x:Name="ProgressDetail" Text="Preparing to download the selected ZIP." Margin="0,8,0,0" FontSize="9" Foreground="{StaticResource MutedBrush}" />
+              </StackPanel>
+            </Border>
+            <TextBlock Text="UPDATE STEPS" Style="{StaticResource FieldLabel}" Margin="1,2,0,9" />
+            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="10" Padding="13,6">
+              <StackPanel>
+                <TextBlock x:Name="ProgressLineOne" Text="○   Check release and installation folder" Margin="0,5" FontSize="10" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineTwo" Text="○   Download portable app" Margin="0,5" FontSize="10" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineThree" Text="○   Verify file size and SHA-256" Margin="0,5" FontSize="10" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineFour" Text="○   Extract and validate app files" Margin="0,5" FontSize="10" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineFive" Text="○   Validate app files and prepare install" Margin="0,5" FontSize="10" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineSix" Text="○   Replace app files and register app" Margin="0,5" FontSize="10" Foreground="#777282" />
+                <TextBlock x:Name="ProgressLineSeven" Text="○   Clean up temporary files" Margin="0,5" FontSize="10" Foreground="#777282" />
+              </StackPanel>
+            </Border>
+            <Border Background="#252232" BorderBrush="#403952" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,13,0,0">
+              <TextBlock Text="Internet access is used to download the selected GitHub release. Your account data is not changed." FontSize="10" Foreground="#C1BDCE" TextWrapping="Wrap" />
+            </Border>
+          </StackPanel>
+
+          <!-- Step 5: ask whether to launch the app after installation. -->
+          <StackPanel x:Name="CompleteStep" Visibility="Collapsed" HorizontalAlignment="Stretch">
+            <Border Width="54" Height="54" CornerRadius="18" Background="#1F302A" BorderBrush="#365844" BorderThickness="1" HorizontalAlignment="Left" Margin="0,0,0,17">
+              <TextBlock Text="✓" FontSize="28" Foreground="#76D6A6" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <TextBlock Text="Your Orbit is ready." FontSize="24" FontWeight="SemiBold" />
+            <TextBlock Text="Orbit Chat was downloaded and installed successfully." Margin="0,8,0,19" FontSize="12" Foreground="{StaticResource MutedBrush}" />
+            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="10" Padding="15">
+              <StackPanel>
+                <TextBlock x:Name="CompleteAction" Text="Fresh installation preview" FontSize="12" FontWeight="SemiBold" />
+                <TextBlock x:Name="CompleteVersion" Text="Orbit Chat 1.2.0" Margin="0,5,0,0" FontSize="10" Foreground="{StaticResource MutedBrush}" />
+              </StackPanel>
+            </Border>
+            <Border Background="#252232" BorderBrush="#403952" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,16,0,0">
+              <TextBlock Text="Your Orbit Chat account data stays in your Windows profile. Installed apps includes an uninstaller for this installation."
+                         FontSize="10" Foreground="#C1BDCE" TextWrapping="Wrap" LineHeight="16" />
+            </Border>
+            <TextBlock Text="Would you like to open Orbit Chat now?" Margin="1,18,0,9" FontSize="12" FontWeight="SemiBold" />
+            <StackPanel Orientation="Horizontal">
+              <Button x:Name="OpenAndExitButton" Content="Open &amp; exit" Style="{StaticResource PrimaryButton}"
+                      Margin="0,0,9,0" Click="OpenAndExitButton_Click" />
+              <Button x:Name="ExitButton" Content="Exit" Style="{StaticResource FooterButton}"
+                      Click="ExitButton_Click" />
+            </StackPanel>
+          </StackPanel>
+        </StackPanel>
+      </Grid>
+
+      <Border Grid.Row="3" Background="#191720" BorderBrush="#302D3A" BorderThickness="0,1,0,0"
+              CornerRadius="0,0,12,12" Padding="22,11">
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="8" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+          <StackPanel VerticalAlignment="Center">
+            <TextBlock Text="Orbit Chat · online installer" FontSize="10" Foreground="#ABA6B5" />
+            <TextBlock Text="Downloads portable releases from GitHub." Margin="0,3,0,0" FontSize="9" Foreground="#706B7B" />
+          </StackPanel>
+          <Button x:Name="BackButton" Grid.Column="1" Content="←  Back" Style="{StaticResource FooterButton}" Click="BackButton_Click" />
+          <Button x:Name="NextButton" Grid.Column="3" Content="Next  →" Style="{StaticResource PrimaryButton}" Click="NextButton_Click" />
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>
