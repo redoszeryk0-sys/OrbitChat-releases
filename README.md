@@ -25,38 +25,6 @@ Run `release\Orbit-Chat-Online-Installer.exe` (or download it from the installer
 
 This unsigned build may show a Windows SmartScreen prompt. Orbit Chat has not been code-signed.
 
-## Run from source
-
-Requirements: Windows 10/11 x64, Node.js 22 or newer, and npm.
-
-```powershell
-npm install
-npm run dev
-```
-
-Build and test:
-
-```powershell
-npm run typecheck
-npm test
-npm run build
-npm run build:portable
-npm run zip:portable
-npm run installer:online
-npm run installer:updater
-```
-
-`build:portable` prepares the Windows x64 app folder, and `zip:portable` builds the updater in a temporary directory and includes it in the versioned portable ZIP automatically. The standalone updater is not published as a separate release asset. By default, the ZIP is written to the sibling `Orbit Chat Bundled Updater Builds` folder; pass `-OutputDirectory` to `scripts/build-portable-zip.ps1` to choose another location. Versioned app assets use the filename form `Orbit-Chat-<tag>-win-x64.zip`. Older installations without a bundled updater must be installed using the current Online Installer before in-app updates are available. See [`installer/OfflineInstaller/README.md`](installer/OfflineInstaller/README.md), [`installer/Updater/README.md`](installer/Updater/README.md), and [backup and restore](docs/BACKUP_RESTORE.md).
-
-To build and publish versioned portable releases automatically from GitHub Actions, see [automatic releases](docs/AUTOMATIC_RELEASES.md).
-
-## Optional services
-
-- **Tenor:** Set `TENOR_API_KEY` on the backend to enable GIF search. Without it, the app reports that GIF search is not configured and sends no placeholder results. See [Tenor's API documentation](https://developers.google.com/tenor/guides/endpoints).
-- **TURN:** Set `TURN_URL`, `TURN_USERNAME`, and `TURN_CREDENTIAL` to your own authenticated TURN service for better voice connectivity. Do not put secrets in the desktop renderer or commit them.
-
-No third-party service is required for local accounts, text chat, friends, uploads, or local SQLite storage.
-
 ## Data locations
 
 The installed desktop app stores its database, attachments, settings, and encrypted session tokens in Electron's per-user application data directory. Back up the whole data directory to preserve the SQLite database and uploaded files.

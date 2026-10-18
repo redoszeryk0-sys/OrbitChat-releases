@@ -24,10 +24,14 @@ npm run typecheck
 npm test
 npm run build
 npm run build:portable
+npm run zip:portable
 npm run installer:online
+npm run installer:updater
 ```
 
 The desktop app includes its embedded API code under `server/src`.
+
+`build:portable` prepares the Windows x64 app folder. `zip:portable` includes the updater inside the versioned portable ZIP; by default, it writes the ZIP to the sibling `Orbit Chat Bundled Updater Builds` folder. Pass `-OutputDirectory` to `scripts/build-portable-zip.ps1` to choose another location. See [`installer/OfflineInstaller/README.md`](installer/OfflineInstaller/README.md) and [`installer/Updater/README.md`](installer/Updater/README.md) for installer and updater details.
 
 ## Project files
 
@@ -38,10 +42,6 @@ The desktop app includes its embedded API code under `server/src`.
 - `installer/Updater/` - standalone, bundled app updater source
 - `scripts/`, `docs/` - portable build scripts and application documentation
 - `build/` - Windows app and installer artwork/configuration
-
-## Automatic releases
-
-Versioned portable ZIP releases are built and published by GitHub Actions when a matching semantic-version tag is pushed. See [`docs/AUTOMATIC_RELEASES.md`](docs/AUTOMATIC_RELEASES.md) for the required `ORBITCHAT_RELEASES_TOKEN` secret and the tagging steps.
 
 ## License and third-party software
 
